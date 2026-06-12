@@ -1,0 +1,85 @@
+# ── Environment variables ─────────────────────────────────────────────────────
+# NEVER commit real credentials. Use .env.example as the template.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# ── Node / Next.js ────────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+dist/
+build/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+
+# ── AI model weights ──────────────────────────────────────────────────────────
+# DeepFace downloads weights into .deepface/ (can be several hundred MB)
+.deepface/
+*.weights
+*.h5
+*.pt
+*.onnx
+models/
+
+# ── MediaPipe WASM assets — copied from node_modules at build time ────────────
+frontend/public/mediapipe/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── OS artefacts ─────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── IDE / editor ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*.suo
+*.user
+
+# ── Prisma generated client ──────────────────────────────────────────────────
+core/src/generated/
+
+# ── Screenshots (large PNGs — use assets/screenshots/ locally only) ───────────
+assets/screenshots/
+
+# ── Coverage ─────────────────────────────────────────────────────────────────
+coverage/
+.coverage
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+cookies.txt
+*.pem
+*.key
+*.p12
+.vercel
+.railway

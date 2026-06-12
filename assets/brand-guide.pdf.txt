@@ -1,0 +1,11 @@
+PLACEHOLDER — brand-guide.pdf must be added manually.
+
+This file documents the VeriKYC visual identity:
+  - Primary color:   #1B4F72 (navy)
+  - Secondary color: #2874A6 (blue)
+  - Accent color:    #D35400 (orange)
+  - Heading font:    IBM Plex Mono
+  - Body font:       Inter
+  - Tone:            Enterprise, trustworthy, data-dense, fintech-grade
+
+Replace this file with the actual brand-guide.pdf before shipping.

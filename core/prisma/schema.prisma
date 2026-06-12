@@ -1,0 +1,232 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id                  String              @id @default(cuid())
+  email               String              @unique
+  passwordHash        String
+  fullName            String
+  phone               String?
+  role                Role                @default(APPLICANT)
+  isVerified          Boolean             @default(false)
+  emailVerified       Boolean             @default(false)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  auditEvents         AuditEvent[]
+  claimedApplications KycApplication[]    @relation("ClaimedApplications")
+  kycApplications     KycApplication[]    @relation("UserApplications")
+  refreshTokens       RefreshToken[]
+  reviewDecisions     ReviewDecision[]
+  emailVerification   EmailVerification?
+
+  @@index([email])
+  @@map("users")
+}
+
+model EmailVerification {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  otp       String
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("email_verifications")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  userId    String
+  expiresAt DateTime
+  rotatedAt DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  family    String    @default("")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@index([family])
+  @@map("refresh_tokens")
+}
+
+model KycApplication {
+  id                  String               @id @default(cuid())
+  userId              String
+  status              AppStatus            @default(DRAFT)
+  submittedAt         DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  overallScore        Float?
+  scoreBand           String?
+  claimedAt           DateTime?
+  claimedById         String?
+  auditEvents         AuditEvent[]
+  documents           Document[]
+  identityCorrelation IdentityCorrelation?
+  claimedBy           User?                @relation("ClaimedApplications", fields: [claimedById], references: [id])
+  user                User                 @relation("UserApplications", fields: [userId], references: [id], onDelete: Cascade)
+  reviewDecisions     ReviewDecision[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([claimedById])
+  @@map("kyc_applications")
+}
+
+model Document {
+  id                   String                @id @default(cuid())
+  applicationId        String
+  kind                 DocKind
+  status               DocStatus             @default(UPLOADED)
+  cloudinaryId         String?
+  cloudinaryUrl        String?
+  mimeType             String?
+  fileSizeBytes        Int?
+  uploadedAt           DateTime?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  sha256               String?
+  documentVerification DocumentVerification?
+  application          KycApplication        @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  extractedFields      ExtractedField[]
+
+  @@index([applicationId])
+  @@index([kind])
+  @@map("documents")
+}
+
+model ExtractedField {
+  id         String   @id @default(cuid())
+  documentId String
+  fieldName  String
+  fieldValue String
+  confidence Float    @default(0)
+  source     String   @default("ocr")
+  createdAt  DateTime @default(now())
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("extracted_fields")
+}
+
+model DocumentVerification {
+  id            String    @id @default(cuid())
+  documentId    String    @unique
+  isAuthentic   Boolean?
+  fraudScore    Float?
+  ocrConfidence Float?
+  rawAiResponse Json?
+  verifiedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  document      Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("document_verifications")
+}
+
+model IdentityCorrelation {
+  id                String         @id @default(cuid())
+  applicationId     String         @unique
+  faceMatchScore    Float?
+  nameMatchScore    Float?
+  dobMatchScore     Float?
+  overallScore      Float?
+  isCorrelated      Boolean?
+  rawAiResponse     Json?
+  correlatedAt      DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  addressMatchScore Float?
+  genderMatchScore  Float?
+  application       KycApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@map("identity_correlations")
+}
+
+model ReviewDecision {
+  id            String         @id @default(cuid())
+  applicationId String
+  reviewerId    String
+  decision      Decision
+  notes         String?
+  decidedAt     DateTime       @default(now())
+  createdAt     DateTime       @default(now())
+  reasonCodes   String[]
+  application   KycApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  reviewer      User           @relation(fields: [reviewerId], references: [id])
+
+  @@index([applicationId])
+  @@index([reviewerId])
+  @@map("review_decisions")
+}
+
+model AuditEvent {
+  id            String          @id @default(cuid())
+  actorId       String?
+  applicationId String?
+  action        String
+  entity        String
+  entityId      String?
+  meta          Json?
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime        @default(now())
+  actor         User?           @relation(fields: [actorId], references: [id])
+  application   KycApplication? @relation(fields: [applicationId], references: [id])
+
+  @@index([actorId])
+  @@index([applicationId])
+  @@index([action])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_events")
+}
+
+enum Role {
+  APPLICANT
+  REVIEWER
+  ADMIN
+}
+
+enum AppStatus {
+  DRAFT
+  SUBMITTED
+  PROCESSING
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum DocKind {
+  AADHAAR
+  PAN
+  PASSPORT
+  DRIVING_LICENCE
+  SELFIE
+}
+
+enum DocStatus {
+  UPLOADED
+  QUEUED
+  PROCESSING
+  VERIFIED
+  NEEDS_REVIEW   // fallback path: no QR, OCR-only, capped confidence — routes to manual review
+  FAILED
+}
+
+enum Decision {
+  APPROVED
+  REJECTED
+  ESCALATED
+}

@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: verikyc-core
+    runtime: node
+    rootDir: core
+    buildCommand: npm ci && npm run build
+    releaseCommand: npm run migrate:deploy && npm run seed
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Neon — set in dashboard (sensitive)
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      # Cloudinary — set in dashboard (sensitive)
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      # JWT — set in dashboard (sensitive, min 32 random chars each)
+      - key: ACCESS_SECRET
+        sync: false
+      - key: REFRESH_SECRET
+        sync: false
+      # Service-to-service — set in dashboard (must match AI service)
+      - key: INTERNAL_TOKEN
+        sync: false
+      - key: AI_SERVICE_URL
+        sync: false
+      # Frontend — set in dashboard (your Vercel URL)
+      - key: FRONTEND_ORIGIN
+        sync: false
+      # SMTP — Gmail App Password (set in dashboard, never commit real values)
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      # Resend — transactional email for OTP
+      - key: RESEND_API_KEY
+        sync: false

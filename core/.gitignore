@@ -1,0 +1,7 @@
+# Compiled output
+dist/
+build/
+
+# Prisma generated client (regenerated via `prisma generate`)
+# Keep: prisma/schema.prisma and prisma/migrations/ — those ARE committed
+node_modules/@prisma/client/runtime/

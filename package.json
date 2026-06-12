@@ -1,0 +1,12 @@
+{
+  "name": "verikyc-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "VeriKYC monorepo root — dev tools only (puppeteer for screenshot loop)",
+  "scripts": {
+    "screenshot": "node scripts/screenshot.js"
+  },
+  "devDependencies": {
+    "puppeteer": "^22.15.0"
+  }
+}

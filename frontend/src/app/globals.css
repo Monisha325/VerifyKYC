@@ -1,0 +1,47 @@
+/* claw.md brand colors: Primary #1B4F72 · Secondary #2874A6 · Accent #D35400 */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:ital,opsz,wght@0,14..32,300..800;1,14..32,300..800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand-navy:   #1B4F72;
+  --brand-blue:   #2874A6;
+  --brand-orange: #D35400;
+}
+
+@layer base {
+  html { scroll-behavior: smooth; }
+
+  body {
+    @apply font-sans antialiased bg-gray-50 text-gray-900;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background: #1E3A5F22;
+    color: #1E3A5F;
+  }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+@layer components {
+  /* Score bar fill animation */
+  .score-bar {
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Skeleton shimmer */
+  .skeleton {
+    @apply rounded-lg;
+    background: linear-gradient(90deg, #e5e7eb 25%, #f3f4f6 50%, #e5e7eb 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
+  }
+}
