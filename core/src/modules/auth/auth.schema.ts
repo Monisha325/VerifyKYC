@@ -1,18 +1,14 @@
 import { z } from 'zod';
 
-// Trims + lowercases before validation, then enforces Gmail-only domain.
-const gmailEmail = (label = 'Invalid email address') =>
+// Trims + lowercases before validation, then checks standard email format.
+const validEmail = (label = 'Invalid email address') =>
   z.preprocess(
     (v) => (typeof v === 'string' ? v.trim().toLowerCase() : v),
-    z.string()
-      .email(label)
-      .refine((v) => v.endsWith('@gmail.com'), {
-        message: 'Only Gmail addresses are allowed.',
-      })
+    z.string().email(label)
   );
 
 export const RegisterSchema = z.object({
-  email: gmailEmail('Invalid email address'),
+  email: validEmail('Invalid email address'),
   password: z
     .string()
     .min(8, 'Password must be at least 8 characters')
@@ -22,17 +18,17 @@ export const RegisterSchema = z.object({
 });
 
 export const LoginSchema = z.object({
-  email: gmailEmail(),
+  email: validEmail(),
   password: z.string().min(1, 'Password required'),
 });
 
 export const VerifyEmailSchema = z.object({
-  email: gmailEmail('Invalid email address'),
+  email: validEmail('Invalid email address'),
   otp:   z.string().length(6, 'OTP must be 6 digits').regex(/^\d{6}$/, 'OTP must be numeric'),
 });
 
 export const ResendOtpSchema = z.object({
-  email: gmailEmail('Invalid email address'),
+  email: validEmail('Invalid email address'),
 });
 
 export type RegisterDto    = z.infer<typeof RegisterSchema>;
