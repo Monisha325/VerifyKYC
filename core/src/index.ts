@@ -19,6 +19,7 @@ import auditRoutes from './routes/audit.routes';
 import agentRoutes from './agents/agent.router';
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 4000;
 
 app.use(helmet());
@@ -54,6 +55,7 @@ app.get('/health', async (_req, res) => {
   res.json({
     status:  'ok',
     service: 'verikyc-core',
+    commit:  process.env.RENDER_GIT_COMMIT ?? 'unknown',
     db:      dbStatus,
     vars: {
       DATABASE_URL:  !!process.env.DATABASE_URL,
