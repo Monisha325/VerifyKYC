@@ -67,31 +67,6 @@ app.get('/health', async (_req, res) => {
 
 app.get('/api/v1/ping', (_req, res) => res.json({ pong: true }));
 
-// Temporary seed endpoint — protected by INTERNAL_TOKEN, removed after first use
-app.post('/api/v1/admin/seed', async (req, res) => {
-  if (req.headers['x-internal-token'] !== process.env.INTERNAL_TOKEN) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
-  const { hash } = await import('@node-rs/argon2');
-  const accounts = [
-    { email: 'applicant@verikyc.dev', fullName: 'VeriKYC Applicant', role: 'APPLICANT' as const },
-    { email: 'reviewer@verikyc.dev',  fullName: 'VeriKYC Reviewer',  role: 'REVIEWER'  as const },
-    { email: 'admin@verikyc.dev',     fullName: 'VeriKYC Admin',     role: 'ADMIN'     as const },
-  ];
-  const passwordHash = await hash('Test@1234');
-  const results = [];
-  for (const a of accounts) {
-    const user = await prisma.user.upsert({
-      where:  { email: a.email },
-      create: { email: a.email, passwordHash, fullName: a.fullName, role: a.role, emailVerified: true },
-      update: { passwordHash, fullName: a.fullName, role: a.role, emailVerified: true },
-      select: { email: true, role: true },
-    });
-    results.push(user);
-  }
-  return res.json({ seeded: results });
-});
-
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/applications', applicationRoutes);
 app.use('/api/v1/documents', documentRoutes);
