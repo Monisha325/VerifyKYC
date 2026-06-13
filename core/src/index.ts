@@ -78,6 +78,35 @@ app.use('/api/v1/review', reviewRoutes);
 app.use('/api/v1/audit', auditRoutes);
 app.use('/api/v1', agentRoutes);
 
+app.get('/api/v1/debug/routes', (req, res) => {
+  type RouteEntry = { method: string; path: string };
+  const routes: RouteEntry[] = [];
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function walk(stack: any[], prefix = '') {
+    for (const layer of stack) {
+      if (layer.route) {
+        const methods = Object.keys(layer.route.methods).map(m => m.toUpperCase());
+        for (const method of methods) {
+          routes.push({ method, path: prefix + layer.route.path });
+        }
+      } else if (layer.name === 'router' && layer.handle?.stack) {
+        const sub = layer.regexp?.source
+          ?.replace(/\\\//g, '/')
+          .replace(/\^\\\//, '')
+          .replace(/\\\/\?\(\?=\\\/\|\$\)/, '')
+          .replace(/\(\?:\(\[\^\\\/\]\+\?\)\)/g, ':param')
+          ?? '';
+        walk(layer.handle.stack, prefix + '/' + sub.replace(/^\//, ''));
+      }
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  walk((app as any)._router.stack);
+  res.json(routes);
+});
+
 app.use(errorHandler);
 
 const server = app.listen(PORT, () => {
