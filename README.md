@@ -138,13 +138,6 @@ Score bands are **hints for reviewers only** — nothing auto-approves.
 - Audit log is append-only — no UPDATE or DELETE on `AuditEvent` ever
 - All sessions invalidated on refresh-token reuse detection (family revocation)
 
-## Pre-Launch Deliverables
-
-The following files in `assets/` are placeholder stubs and must be replaced before shipping:
-
-- `assets/VeriKYC_KYC_Platform_Documentation.pdf.txt` — replace with the full product spec PDF (architecture, API reference, AI scoring formulas, deployment guide, security model)
-- `assets/brand-guide.pdf.txt` — replace with the VeriKYC brand guide PDF (colors, typography, tone)
-
 ## License
 
 Private — All rights reserved.
