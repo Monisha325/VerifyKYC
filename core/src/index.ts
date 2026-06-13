@@ -1,3 +1,4 @@
+import './register-mcp-paths';
 import 'express-async-errors';
 import dotenv from 'dotenv';
 dotenv.config();
@@ -15,6 +16,7 @@ import applicationRoutes from './modules/applications/application.router';
 import documentRoutes from './routes/document.routes';
 import reviewRoutes from './routes/review.routes';
 import auditRoutes from './routes/audit.routes';
+import agentRoutes from './agents/agent.router';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -72,6 +74,7 @@ app.use('/api/v1/applications', applicationRoutes);
 app.use('/api/v1/documents', documentRoutes);
 app.use('/api/v1/review', reviewRoutes);
 app.use('/api/v1/audit', auditRoutes);
+app.use('/api/v1', agentRoutes);
 
 app.use(errorHandler);
 
