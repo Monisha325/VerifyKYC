@@ -36,7 +36,7 @@ const MEMBERS_PATTERNS = [
   /\b(review[- ]?queue|pending[- ]?review|applications[- ]?to[- ]?review)\b/i,
   /\b(evidence[- ]?bundle|full[- ]?evidence|review[- ]?bundle)\b/i,
   /\b(claim[- ]?application|take[- ]?case|assign[- ]?review)\b/i,
-  /\b(submit[- ]?decision|approve|reject|escalate)[^d]/i,
+  /\b(submit[- ]?decision|approve|reject|escalate)\b/i,
   /\b(audit[- ]?trail|audit[- ]?history|audit[- ]?log|event[- ]?history)\b/i,
 ];
 

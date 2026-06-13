@@ -42,8 +42,8 @@ router.post(
 
       const args: OrchestratorArgs = {
         ...rest,
-        userId: (req as Request & { user?: { id: string; role: string } }).user?.id,
-        role:   (req as Request & { user?: { id: string; role: string } }).user?.role,
+        userId: req.user?.sub,
+        role:   req.user?.role,
       };
 
       const result = await runOrchestrator(message, args);
