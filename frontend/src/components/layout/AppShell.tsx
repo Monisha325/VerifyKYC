@@ -3,7 +3,7 @@ import Link        from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   ShieldCheck, LayoutDashboard, FileCheck,
-  LogOut, ChevronRight, User, ClipboardList,
+  LogOut, ChevronRight, User, ClipboardList, Bot,
 } from 'lucide-react';
 import { useAuth }        from '@/context/AuthContext';
 import { useApplication } from '@/context/ApplicationContext';
@@ -36,6 +36,7 @@ export default function AppShell({ children, wide = false }: { children: React.R
     : [
         { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
         ...(applyNavItem && applyNavItem.href !== '/dashboard' ? [applyNavItem] : []),
+        { href: '/chat', icon: Bot, label: 'Agent Chat' },
       ];
 
   async function handleLogout() {
