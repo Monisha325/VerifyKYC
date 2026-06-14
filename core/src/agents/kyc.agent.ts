@@ -74,9 +74,20 @@ export const kycTools: Record<string, (args: Record<string, unknown>) => Promise
   },
 
   get_application_status: async (args) => {
-    const { applicationId, userId, role } = args as { applicationId: string; userId: string; role: string };
+    const { applicationId, userId, role } = args as { applicationId?: string; userId: string; role: string };
     try {
-      const app = await getApplication(applicationId, userId, role);
+      let appId = applicationId;
+      if (!appId && userId) {
+        const apps = await prisma.kycApplication.findMany({
+          where:   { userId },
+          orderBy: { createdAt: 'desc' },
+          take:    1,
+          select:  { id: true },
+        });
+        appId = apps[0]?.id;
+      }
+      if (!appId) return { content: [{ type: 'text', text: JSON.stringify({ error: 'No application found' }) }], isError: true };
+      const app = await getApplication(appId, userId, role ?? 'APPLICANT');
       return text({
         id:           app.id,
         status:       app.status,
@@ -89,9 +100,20 @@ export const kycTools: Record<string, (args: Record<string, unknown>) => Promise
   },
 
   get_application: async (args) => {
-    const { applicationId, userId, role } = args as { applicationId: string; userId: string; role: string };
+    const { applicationId, userId, role } = args as { applicationId?: string; userId: string; role: string };
     try {
-      return text(await getApplication(applicationId, userId, role));
+      let appId = applicationId;
+      if (!appId && userId) {
+        const apps = await prisma.kycApplication.findMany({
+          where:   { userId },
+          orderBy: { createdAt: 'desc' },
+          take:    1,
+          select:  { id: true },
+        });
+        appId = apps[0]?.id;
+      }
+      if (!appId) return { content: [{ type: 'text', text: JSON.stringify({ error: 'No application found' }) }], isError: true };
+      return text(await getApplication(appId, userId, role ?? 'APPLICANT'));
     } catch (e) { return toolError(e); }
   },
 
@@ -172,22 +194,22 @@ kycAgent.tool(
 
 kycAgent.tool(
   'get_application_status',
-  'Lightweight status poll for a submitted application. Returns { id, status, overallScore, scoreBand, submittedAt, updatedAt }. Poll this after submit_application until status is PENDING_REVIEW.',
+  'Lightweight status poll for a submitted application. Returns { id, status, overallScore, scoreBand, submittedAt, updatedAt }. Poll this after submit_application until status is PENDING_REVIEW. If applicationId is omitted, looks up the user\'s most recent application automatically.',
   {
-    applicationId: z.string(),
+    applicationId: z.string().optional(),
     userId:        z.string(),
-    role:          z.string(),
+    role:          z.string().optional(),
   },
   (args) => kycTools.get_application_status(args),
 );
 
 kycAgent.tool(
   'get_application',
-  'Fetch the full application record including documents (with AI verification results) and the latest review decision. APPLICANTs can only access their own; REVIEWER and ADMIN can access any.',
+  'Fetch the full application record including documents (with AI verification results) and the latest review decision. APPLICANTs can only access their own; REVIEWER and ADMIN can access any. If applicationId is omitted, looks up the user\'s most recent application automatically.',
   {
-    applicationId: z.string(),
+    applicationId: z.string().optional(),
     userId:        z.string(),
-    role:          z.string(),
+    role:          z.string().optional(),
   },
   (args) => kycTools.get_application(args),
 );
