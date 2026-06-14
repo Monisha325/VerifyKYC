@@ -13,10 +13,7 @@ import Input           from '@/components/ui/Input';
 const schema = z.object({
   fullName: z.string().min(2,  'Enter your full name'),
   email: z.string()
-    .email('Enter a valid email')
-    .refine((v) => v.trim().toLowerCase().endsWith('@gmail.com'), {
-      message: 'Only Gmail addresses are allowed.',
-    }),
+    .email('Enter a valid email'),
   password: z.string()
     .min(8,  'At least 8 characters')
     .max(128, 'Password too long'),
@@ -161,7 +158,7 @@ export default function RegisterPage() {
               label="Email address"
               type="email"
               autoComplete="email"
-              placeholder="you@gmail.com"
+              placeholder="you@example.com"
               icon={<Mail className="w-4 h-4" />}
               error={errors.email?.message}
               {...register('email')}
