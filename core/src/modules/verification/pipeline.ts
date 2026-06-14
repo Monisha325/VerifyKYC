@@ -1306,6 +1306,8 @@ async function _runAadhaarFallback(
     }
   }
 
+  let verhoeffPassed = false; // tracks if Aadhaar number is mathematically valid
+
   try {
     // Extract the raw 12-digit number from OCR text directly (before masking)
     const rawNumMatch = ocrText.match(/\b(\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/);
@@ -1328,7 +1330,8 @@ async function _runAadhaarFallback(
       } else {
         // OCR-only path (no QR): Verhoeff is authoritative
         if (reconciled) {
-          authenticityScore = 75;   // format-valid → capped fallback score
+          authenticityScore = 85;  // was 75 — Verhoeff pass = mathematically valid number
+          verhoeffPassed = true;
         } else {
           flags.push('checksum_fail');
           authenticityScore = 30;
@@ -1418,7 +1421,9 @@ async function _runAadhaarFallback(
   // FIX Bug-3: Fallback path — quality is a downward-only modifier. A clean scan cannot
   // compensate for missing cryptographic verification. Cap the multiplier at 1.0.
   const qs = quality.quality_score ?? 1.0;
-  const quality_gate_multiplier = Math.min(1.0, Math.max(0.85, qs));
+  const quality_gate_multiplier = verhoeffPassed
+    ? Math.min(1.0, Math.max(0.95, qs))  // valid doc: minimum 0.95 multiplier
+    : Math.min(1.0, Math.max(0.85, qs)); // uncertain: normal 0.85 floor
 
   // FIX 2: No double quality penalty on OCR quality.
   const ocr_quality = Math.round((ocrResult?.avg_confidence ?? 0.5) * 100);
