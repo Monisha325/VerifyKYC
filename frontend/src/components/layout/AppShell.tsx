@@ -3,7 +3,7 @@ import Link        from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   ShieldCheck, LayoutDashboard, FileCheck,
-  LogOut, ChevronRight, User, ClipboardList, Bot,
+  LogOut, ChevronRight, User, ClipboardList, Bot, ScrollText,
 } from 'lucide-react';
 import { useAuth }        from '@/context/AuthContext';
 import { useApplication } from '@/context/ApplicationContext';
@@ -18,6 +18,7 @@ export default function AppShell({ children, wide = false }: { children: React.R
   const router                         = useRouter();
 
   const isReviewer = user?.role === 'REVIEWER' || user?.role === 'ADMIN';
+  const isAdmin    = user?.role === 'ADMIN';
 
   const applyNavItem = (() => {
     if (isReviewer) return null;
@@ -32,7 +33,11 @@ export default function AppShell({ children, wide = false }: { children: React.R
   })();
 
   const NAV = isReviewer
-    ? [{ href: '/admin/queue', icon: ClipboardList, label: 'Review Queue' }]
+    ? [
+        { href: '/admin/queue', icon: ClipboardList, label: 'Review Queue' },
+        ...(isAdmin ? [{ href: '/admin/audit', icon: ScrollText, label: 'Audit Trail' }] : []),
+        { href: '/chat', icon: Bot, label: 'Agent Chat' },
+      ]
     : [
         { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
         ...(applyNavItem && applyNavItem.href !== '/dashboard' ? [applyNavItem] : []),
