@@ -26,7 +26,7 @@ interface Message {
 
 export default function ChatPage() {
   const { user } = useAuth();
-  const { app } = useApplication();
+  const { app, loading: appLoading } = useApplication();
   const currentApplicationId = app?.id ?? null;
   console.log('DEBUG chat context:', { appId: currentApplicationId, appStatus: app?.status });
   const allowedTools = TOOLS_BY_ROLE[user?.role ?? 'APPLICANT'] ?? TOOLS_BY_ROLE.APPLICANT;
@@ -116,7 +116,10 @@ export default function ChatPage() {
     <div className="animate-fade-up flex flex-col h-[calc(100vh-8rem)]">
 
       <div className="mb-4 flex-shrink-0">
-        <h1 className="text-2xl font-bold text-gray-900">Agent Chat</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold text-gray-900">Agent Chat</h1>
+          {appLoading && <span className="text-xs text-gray-400">Loading context…</span>}
+        </div>
         <p className="text-sm text-gray-500 mt-1">
           Ask a question or give a command — the agent routes to the right tool automatically.
         </p>
@@ -125,7 +128,7 @@ export default function ChatPage() {
       {/* Messages */}
       <Card className="flex-1 min-h-0 overflow-y-auto mb-3" padding={false}>
         <div className="p-4 space-y-4">
-          {messages.map(msg => <Bubble key={msg.id} msg={msg} onTool={sendTool} allowedTools={allowedTools} />)}
+          {messages.map(msg => <Bubble key={msg.id} msg={msg} onTool={sendTool} allowedTools={allowedTools} appLoading={appLoading} />)}
 
           {loading && (
             <div className="flex items-start gap-3">
@@ -196,7 +199,7 @@ function UserAvatar() {
 
 // ── Message bubble ────────────────────────────────────────────────────────────
 
-function Bubble({ msg, onTool, allowedTools }: { msg: Message; onTool: (tool: string) => void; allowedTools: Set<string> }) {
+function Bubble({ msg, onTool, allowedTools, appLoading }: { msg: Message; onTool: (tool: string) => void; allowedTools: Set<string>; appLoading: boolean }) {
   if (msg.role === 'user') {
     return (
       <div className="flex items-start gap-3 justify-end">
@@ -235,7 +238,7 @@ function Bubble({ msg, onTool, allowedTools }: { msg: Message; onTool: (tool: st
   return (
     <div className="flex items-start gap-3">
       <BotAvatar />
-      <AgentContent msg={msg} onTool={onTool} allowedTools={allowedTools} />
+      <AgentContent msg={msg} onTool={onTool} allowedTools={allowedTools} appLoading={appLoading} />
     </div>
   );
 }
@@ -264,7 +267,7 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
 
 // ── Agent message content (routing vs tool result vs plain text) ───────────────
 
-function AgentContent({ msg, onTool, allowedTools }: { msg: Message; onTool: (tool: string) => void; allowedTools: Set<string> }) {
+function AgentContent({ msg, onTool, allowedTools, appLoading }: { msg: Message; onTool: (tool: string) => void; allowedTools: Set<string>; appLoading: boolean }) {
   const { parsed, raw } = msg;
 
   // Routing response — orchestrator didn't execute a tool, just identified the agent
@@ -286,8 +289,14 @@ function AgentContent({ msg, onTool, allowedTools }: { msg: Message; onTool: (to
                 <button
                   key={t}
                   type="button"
-                  onClick={() => onTool(t)}
-                  className="px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-mono hover:bg-brand-navy/15 active:scale-95 transition-all cursor-pointer"
+                  onClick={() => !appLoading && onTool(t)}
+                  disabled={appLoading}
+                  className={cn(
+                    'px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-mono transition-all',
+                    appLoading
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'hover:bg-brand-navy/15 active:scale-95 cursor-pointer',
+                  )}
                 >
                   {t}
                 </button>
