@@ -224,9 +224,9 @@ function Bubble({ msg, onTool }: { msg: Message; onTool: (tool: string) => void 
 
 // Tools that can be called with no arguments — safe to show as clickable pills.
 // Everything else requires an ID or structured args and must be typed manually.
+// Excluded: get_review_queue (reviewer-only — applicants should not see it as a pill).
 const ZERO_ARG_TOOLS = new Set([
   'create_application',
-  'get_review_queue',
   'logout',
   'get_current_user',
 ]);
