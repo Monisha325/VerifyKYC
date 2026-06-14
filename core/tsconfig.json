@@ -13,13 +13,7 @@
     "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true,
-    "ignoreDeprecations": "5.0",
-    "baseUrl": ".",
-    "paths": {
-      "@modelcontextprotocol/sdk/server/mcp":            ["node_modules/@modelcontextprotocol/sdk/dist/cjs/server/mcp"],
-      "@modelcontextprotocol/sdk/server/streamableHttp": ["node_modules/@modelcontextprotocol/sdk/dist/cjs/server/streamableHttp"]
-    }
+    "sourceMap": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
