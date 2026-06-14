@@ -25,7 +25,7 @@ import {
   APP_STATUS_LABEL, APP_STATUS_COLOR,
   DOC_STATUS_LABEL, DOC_STATUS_COLOR, DOC_KIND_LABEL,
 } from '@/lib/utils';
-import type { Application, AppStatus, DocStatus } from '@/lib/types';
+import type { Application, AppStatus, DocStatus, KycDocument } from '@/lib/types';
 
 // ── Applicant-facing reason code labels ──────────────────────────────────────
 // Maps reviewer codes to plain-English messages safe to show applicants.
@@ -180,10 +180,30 @@ function DocConfidenceBar({
         sha256:    hash,
       });
       setReuploadState('processing');
-      setTimeout(() => {
-        setReuploadState('done');
-        setTimeout(() => { setReuploadState('idle'); onRefresh(); }, 2000);
-      }, 45_000);
+      const MAX_POLLS = 60; // 5 minutes max (60 × 5s)
+      let polls = 0;
+      const poll = async () => {
+        if (polls++ >= MAX_POLLS) {
+          setReuploadState('idle');
+          onRefresh();
+          return;
+        }
+        try {
+          const { data: appData } = await api.get<Application>(`/applications/${appId}`);
+          // After replacement the old doc is deleted — find the new doc by kind.
+          // Falls back to the old id in case the delete races with our first poll.
+          const newDoc =
+            appData.documents?.find((d: KycDocument) => d.kind === doc.kind && d.id !== doc.id) ??
+            appData.documents?.find((d: KycDocument) => d.id === doc.id);
+          if (!newDoc || newDoc.status === 'VERIFIED' || newDoc.status === 'FAILED' || newDoc.status === 'NEEDS_REVIEW') {
+            setReuploadState('done');
+            setTimeout(() => { setReuploadState('idle'); onRefresh(); }, 2000);
+            return;
+          }
+        } catch { /* network error — keep polling */ }
+        setTimeout(poll, 5_000);
+      };
+      setTimeout(poll, 5_000); // first check after 5s
     } catch (err) {
       console.error('[reupload] replace failed:', err);
       setReuploadState('idle');
