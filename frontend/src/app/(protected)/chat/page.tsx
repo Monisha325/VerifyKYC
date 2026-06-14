@@ -39,16 +39,11 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  async function send() {
-    const text = input.trim();
-    if (!text || loading) return;
-
-    setMessages(prev => [...prev, { id: `u-${Date.now()}`, role: 'user', raw: text }]);
-    setInput('');
+  async function sendPayload(body: Record<string, unknown>, displayText: string) {
+    setMessages(prev => [...prev, { id: `u-${Date.now()}`, role: 'user', raw: displayText }]);
     setLoading(true);
-
     try {
-      const { data } = await api.post<AgentResponse>('/agent/chat', { message: text });
+      const { data } = await api.post<AgentResponse>('/agent/chat', body);
       const rawText = data.content?.[0]?.text ?? '';
       let parsed: Record<string, unknown> | undefined;
       try { parsed = JSON.parse(rawText); } catch { /* plain text */ }
@@ -73,6 +68,18 @@ export default function ChatPage() {
       setLoading(false);
       textareaRef.current?.focus();
     }
+  }
+
+  async function send() {
+    const text = input.trim();
+    if (!text || loading) return;
+    setInput('');
+    await sendPayload({ message: text }, text);
+  }
+
+  async function sendTool(toolName: string) {
+    if (loading) return;
+    await sendPayload({ tool: toolName, args: {} }, toolName);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -100,7 +107,7 @@ export default function ChatPage() {
       {/* Messages */}
       <Card className="flex-1 min-h-0 overflow-y-auto mb-3" padding={false}>
         <div className="p-4 space-y-4">
-          {messages.map(msg => <Bubble key={msg.id} msg={msg} />)}
+          {messages.map(msg => <Bubble key={msg.id} msg={msg} onTool={sendTool} />)}
 
           {loading && (
             <div className="flex items-start gap-3">
@@ -171,7 +178,7 @@ function UserAvatar() {
 
 // ── Message bubble ────────────────────────────────────────────────────────────
 
-function Bubble({ msg }: { msg: Message }) {
+function Bubble({ msg, onTool }: { msg: Message; onTool: (tool: string) => void }) {
   if (msg.role === 'user') {
     return (
       <div className="flex items-start gap-3 justify-end">
@@ -210,14 +217,14 @@ function Bubble({ msg }: { msg: Message }) {
   return (
     <div className="flex items-start gap-3">
       <BotAvatar />
-      <AgentContent msg={msg} />
+      <AgentContent msg={msg} onTool={onTool} />
     </div>
   );
 }
 
 // ── Agent message content (routing vs tool result vs plain text) ───────────────
 
-function AgentContent({ msg }: { msg: Message }) {
+function AgentContent({ msg, onTool }: { msg: Message; onTool: (tool: string) => void }) {
   const { parsed, raw } = msg;
 
   // Routing response — orchestrator didn't execute a tool, just identified the agent
@@ -234,12 +241,14 @@ function AgentContent({ msg }: { msg: Message }) {
           </p>
           <div className="flex flex-wrap gap-1.5">
             {(parsed.availableTools as string[]).map(t => (
-              <span
+              <button
                 key={t}
-                className="px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-mono"
+                type="button"
+                onClick={() => onTool(t)}
+                className="px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-mono hover:bg-brand-navy/15 active:scale-95 transition-all cursor-pointer"
               >
                 {t}
-              </span>
+              </button>
             ))}
           </div>
         </div>
