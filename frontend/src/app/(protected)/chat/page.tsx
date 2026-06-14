@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Send, Loader2, Bot, User, AlertCircle, Wrench } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
+import { useApplication } from '@/context/ApplicationContext';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
@@ -24,7 +25,10 @@ interface Message {
 }
 
 export default function ChatPage() {
-  useAuth(); // ensures protected layout guard has fired
+  const { user } = useAuth();
+  const { app } = useApplication();
+  const currentApplicationId = app?.id ?? null;
+  const allowedTools = TOOLS_BY_ROLE[user?.role ?? 'APPLICANT'] ?? TOOLS_BY_ROLE.APPLICANT;
   const [messages, setMessages] = useState<Message[]>([{
     id: 'welcome',
     role: 'system',
@@ -40,10 +44,23 @@ export default function ChatPage() {
   }, [messages, loading]);
 
   async function sendPayload(body: Record<string, unknown>, displayText: string) {
+    // For tool calls, merge known context into args so pills work without manual input.
+    // Explicit args always win over injected context.
+    let payload = body;
+    if (body.tool) {
+      const tool = body.tool as string;
+      const explicitArgs = (body.args as Record<string, unknown>) ?? {};
+      const contextArgs: Record<string, unknown> = {
+        ...(currentApplicationId && { applicationId: currentApplicationId }),
+        ...explicitArgs,
+      };
+      payload = { tool, args: contextArgs };
+    }
+
     setMessages(prev => [...prev, { id: `u-${Date.now()}`, role: 'user', raw: displayText }]);
     setLoading(true);
     try {
-      const { data } = await api.post<AgentResponse>('/agent/chat', body);
+      const { data } = await api.post<AgentResponse>('/agent/chat', payload);
       const rawText = data.content?.[0]?.text ?? '';
       let parsed: Record<string, unknown> | undefined;
       try { parsed = JSON.parse(rawText); } catch { /* plain text */ }
@@ -107,7 +124,7 @@ export default function ChatPage() {
       {/* Messages */}
       <Card className="flex-1 min-h-0 overflow-y-auto mb-3" padding={false}>
         <div className="p-4 space-y-4">
-          {messages.map(msg => <Bubble key={msg.id} msg={msg} onTool={sendTool} />)}
+          {messages.map(msg => <Bubble key={msg.id} msg={msg} onTool={sendTool} allowedTools={allowedTools} />)}
 
           {loading && (
             <div className="flex items-start gap-3">
@@ -178,7 +195,7 @@ function UserAvatar() {
 
 // ── Message bubble ────────────────────────────────────────────────────────────
 
-function Bubble({ msg, onTool }: { msg: Message; onTool: (tool: string) => void }) {
+function Bubble({ msg, onTool, allowedTools }: { msg: Message; onTool: (tool: string) => void; allowedTools: Set<string> }) {
   if (msg.role === 'user') {
     return (
       <div className="flex items-start gap-3 justify-end">
@@ -217,28 +234,41 @@ function Bubble({ msg, onTool }: { msg: Message; onTool: (tool: string) => void 
   return (
     <div className="flex items-start gap-3">
       <BotAvatar />
-      <AgentContent msg={msg} onTool={onTool} />
+      <AgentContent msg={msg} onTool={onTool} allowedTools={allowedTools} />
     </div>
   );
 }
 
-// Tools that can be called with no arguments — safe to show as clickable pills.
-// Everything else requires an ID or structured args and must be typed manually.
-// Excluded: get_review_queue (reviewer-only — applicants should not see it as a pill).
-const ZERO_ARG_TOOLS = new Set([
-  'create_application',
-  'logout',
-  'get_current_user',
-]);
+// Per-role pill allowlists. applicationId is injected automatically for tools that need it.
+// Tools requiring args that can't be inferred (documentId, decision, etc.) are excluded.
+const TOOLS_BY_ROLE: Record<string, Set<string>> = {
+  APPLICANT: new Set([
+    'create_application',
+    'get_application_status', // applicationId injected automatically
+    'get_application',        // applicationId injected automatically
+    'get_current_user',
+    'logout',
+  ]),
+  REVIEWER: new Set([
+    'get_review_queue',
+    'get_current_user',
+    'logout',
+  ]),
+  ADMIN: new Set([
+    'get_review_queue',
+    'get_current_user',
+    'logout',
+  ]),
+};
 
 // ── Agent message content (routing vs tool result vs plain text) ───────────────
 
-function AgentContent({ msg, onTool }: { msg: Message; onTool: (tool: string) => void }) {
+function AgentContent({ msg, onTool, allowedTools }: { msg: Message; onTool: (tool: string) => void; allowedTools: Set<string> }) {
   const { parsed, raw } = msg;
 
   // Routing response — orchestrator didn't execute a tool, just identified the agent
   if (parsed && Array.isArray(parsed.availableTools)) {
-    const safeTools = (parsed.availableTools as string[]).filter(t => ZERO_ARG_TOOLS.has(t));
+    const safeTools = (parsed.availableTools as string[]).filter(t => allowedTools.has(t));
     return (
       <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tl-sm bg-gray-50 border border-gray-100 space-y-3">
         <p className="text-sm text-gray-700">
