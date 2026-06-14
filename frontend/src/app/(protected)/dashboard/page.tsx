@@ -9,7 +9,7 @@ const LivenessStatusCard = dynamic(() => import('@/components/liveness/LivenessS
 import Link                             from 'next/link';
 import {
   ShieldCheck, FileText, Clock, CheckCircle2, XCircle,
-  ArrowRight, RefreshCw, Loader2, AlertTriangle, ChevronRight, LifeBuoy, Camera, X,
+  ArrowRight, RefreshCw, Loader2, AlertTriangle, ChevronRight, LifeBuoy, Camera, X, Upload,
 } from 'lucide-react';
 import { api }            from '@/lib/api';
 import { uploadToCloudinary, sha256Hex } from '@/lib/upload';
@@ -158,10 +158,38 @@ function DocConfidenceBar({
 
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [reuploadState, setReuploadState] = useState<'idle' | 'uploading' | 'processing' | 'done'>('idle');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => () => {
     setReuploadState('idle');
   }, []);
+
+  async function handleFileReplace(file: File) {
+    setReuploadState('uploading');
+    try {
+      const { data: params } = await api.post<UploadParams>(
+        `/applications/${appId}/documents/${doc.id}/replace-uploads`,
+      );
+      const [uploaded, hash] = await Promise.all([
+        uploadToCloudinary(file, params, () => {}),
+        sha256Hex(file),
+      ]);
+      await api.post(`/applications/${appId}/documents/${doc.id}/replace`, {
+        publicId:  uploaded.public_id,
+        secureUrl: uploaded.secure_url,
+        sha256:    hash,
+      });
+      setReuploadState('processing');
+      setTimeout(() => {
+        setReuploadState('done');
+        setTimeout(() => { setReuploadState('idle'); onRefresh(); }, 2000);
+      }, 45_000);
+    } catch (err) {
+      console.error('[reupload] replace failed:', err);
+      setReuploadState('idle');
+      onRefresh();
+    }
+  }
 
   return (
     <div className="flex items-start gap-3 py-3 border-b border-gray-50 last:border-0">
@@ -180,15 +208,34 @@ function DocConfidenceBar({
             <Badge className={DOC_STATUS_COLOR[doc.status]} dot>
               {DOC_STATUS_LABEL[doc.status]}
             </Badge>
-            {(isFailed || isLowConfidence) && doc.kind === 'SELFIE' && reuploadState === 'idle' && (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => setIsCameraOpen(true)}
-              >
-                <Camera className="w-3 h-3" />
-                Verify Again
-              </Button>
+            {(isFailed || isLowConfidence) && reuploadState === 'idle' && (
+              <>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => doc.kind === 'SELFIE'
+                    ? setIsCameraOpen(true)
+                    : fileInputRef.current?.click()}
+                >
+                  {doc.kind === 'SELFIE'
+                    ? <Camera className="w-3 h-3" />
+                    : <Upload className="w-3 h-3" />}
+                  {doc.kind === 'SELFIE' ? 'Verify Again' : 'Re-upload'}
+                </Button>
+                {doc.kind !== 'SELFIE' && (
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*,application/pdf"
+                    className="hidden"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) handleFileReplace(file);
+                      e.target.value = '';
+                    }}
+                  />
+                )}
+              </>
             )}
           </div>
         </div>

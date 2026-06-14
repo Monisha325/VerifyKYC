@@ -877,8 +877,8 @@ async function _runPanFallback(
   // FIX Bug-3: Fallback path — quality is a downward-only modifier. A clean scan cannot
   // compensate for missing cryptographic verification. Cap the multiplier at 1.0.
   const qs = quality.quality_score ?? 1.0;
-  const quality_gate_multiplier = Math.min(1.0, Math.max(0.70, qs));
-  
+  const quality_gate_multiplier = Math.min(1.0, Math.max(0.85, qs));
+
   // No double quality penalty: OCR confidence is not multiplied by blur_penalty
   const ocr_quality = Math.round((ocrResult?.avg_confidence ?? 0.5) * 100);
   const doc_confidence = Math.min(100, Math.round(
@@ -1418,7 +1418,7 @@ async function _runAadhaarFallback(
   // FIX Bug-3: Fallback path — quality is a downward-only modifier. A clean scan cannot
   // compensate for missing cryptographic verification. Cap the multiplier at 1.0.
   const qs = quality.quality_score ?? 1.0;
-  const quality_gate_multiplier = Math.min(1.0, Math.max(0.70, qs));
+  const quality_gate_multiplier = Math.min(1.0, Math.max(0.85, qs));
 
   // FIX 2: No double quality penalty on OCR quality.
   const ocr_quality = Math.round((ocrResult?.avg_confidence ?? 0.5) * 100);

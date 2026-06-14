@@ -246,9 +246,9 @@ async function _finalizeCore(
     hasFailedDoc ||
     identityResult.hardFails.filter(f => f !== 'face_verification_unavailable').length > 0;
 
-  if (overallScore >= 85 && !anyHardFlag && !hasNeedsReview && !faceUnavailable) {
+  if (overallScore >= 70 && !anyHardFlag && !hasNeedsReview && !faceUnavailable) {
     band = 'FAST_TRACK';
-  } else if (overallScore >= 55 && !anyHardFlag) {
+  } else if (overallScore >= 45 && !anyHardFlag) {
     band = 'STANDARD';
   } else {
     band = 'FLAGGED';
