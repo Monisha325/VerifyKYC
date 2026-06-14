@@ -28,6 +28,7 @@ export default function ChatPage() {
   const { user } = useAuth();
   const { app } = useApplication();
   const currentApplicationId = app?.id ?? null;
+  console.log('DEBUG chat context:', { appId: currentApplicationId, appStatus: app?.status });
   const allowedTools = TOOLS_BY_ROLE[user?.role ?? 'APPLICANT'] ?? TOOLS_BY_ROLE.APPLICANT;
   const [messages, setMessages] = useState<Message[]>([{
     id: 'welcome',
