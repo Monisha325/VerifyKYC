@@ -222,6 +222,15 @@ function Bubble({ msg, onTool }: { msg: Message; onTool: (tool: string) => void 
   );
 }
 
+// Tools that can be called with no arguments — safe to show as clickable pills.
+// Everything else requires an ID or structured args and must be typed manually.
+const ZERO_ARG_TOOLS = new Set([
+  'create_application',
+  'get_review_queue',
+  'logout',
+  'get_current_user',
+]);
+
 // ── Agent message content (routing vs tool result vs plain text) ───────────────
 
 function AgentContent({ msg, onTool }: { msg: Message; onTool: (tool: string) => void }) {
@@ -229,29 +238,32 @@ function AgentContent({ msg, onTool }: { msg: Message; onTool: (tool: string) =>
 
   // Routing response — orchestrator didn't execute a tool, just identified the agent
   if (parsed && Array.isArray(parsed.availableTools)) {
+    const safeTools = (parsed.availableTools as string[]).filter(t => ZERO_ARG_TOOLS.has(t));
     return (
       <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tl-sm bg-gray-50 border border-gray-100 space-y-3">
         <p className="text-sm text-gray-700">
           {String(parsed.message ?? 'Routed to agent.')}
         </p>
-        <div>
-          <p className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-            <Wrench className="w-3 h-3" />
-            Available tools
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {(parsed.availableTools as string[]).map(t => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => onTool(t)}
-                className="px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-mono hover:bg-brand-navy/15 active:scale-95 transition-all cursor-pointer"
-              >
-                {t}
-              </button>
-            ))}
+        {safeTools.length > 0 && (
+          <div>
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              <Wrench className="w-3 h-3" />
+              Available tools
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {safeTools.map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => onTool(t)}
+                  className="px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-mono hover:bg-brand-navy/15 active:scale-95 transition-all cursor-pointer"
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     );
   }
