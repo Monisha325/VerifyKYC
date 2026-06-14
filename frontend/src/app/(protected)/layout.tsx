@@ -7,15 +7,22 @@ import AppShell       from '@/components/layout/AppShell';
 import { ApplicationProvider } from '@/context/ApplicationContext';
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  const { accessToken, loading } = useAuth();
+  const { user, accessToken, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (!loading && !accessToken) router.replace('/login');
   }, [loading, accessToken, router]);
 
+  useEffect(() => {
+    if (!loading && user && (user.role === 'REVIEWER' || user.role === 'ADMIN')) {
+      router.replace('/admin/queue');
+    }
+  }, [loading, user, router]);
+
   if (loading)      return <PageLoader />;
   if (!accessToken) return null;
+  if (user && (user.role === 'REVIEWER' || user.role === 'ADMIN')) return null;
 
   return (
     <ApplicationProvider>
