@@ -309,7 +309,9 @@ function DocConfidenceBar({
         )}
       </div>
 
-      {/* Liveness camera for re-verification */}
+      {/* Liveness camera for re-verification — only mount for SELFIE to avoid
+          loading the MediaPipe FaceMesh WASM model for every document row */}
+      {doc.kind === 'SELFIE' && (
       <CameraModal
         isOpen={isCameraOpen}
         onClose={() => setIsCameraOpen(false)}
@@ -348,6 +350,7 @@ function DocConfidenceBar({
           }
         }}
       />
+      )}
     </div>
   );
 }
