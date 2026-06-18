@@ -320,7 +320,9 @@ function DocConfidenceBar({
         onVerified={async (result: LivenessVerificationResult) => {
           setIsCameraOpen(false);
           const blob = result.capturedImageBlob;
-          if (!blob) { onRefresh(); return; }
+          // A server-confirmed failed check must not register a document as if
+          // nothing went wrong — only proceed with replacement on a real pass.
+          if (result.status !== 'verified' || !blob) { onRefresh(); return; }
           try {
             setReuploadState('uploading');
             // Step 1: get signed Cloudinary params for replacement
@@ -708,16 +710,16 @@ export default function DashboardPage() {
           )}
 
           {/* ── Liveness verification card ──
-              livenessResult (this session's fresh capture, incl. thumbnail) takes
-              priority; otherwise fall back to the backend-persisted result so the
-              card survives a reload / different browser instead of resetting to
-              "not completed" whenever localStorage is empty. */}
+              A confirmed backend "verified" record always wins, even over a
+              stale/failed local result — only fall back to the local result
+              when the backend has no record at all (e.g. a fresh same-session
+              attempt that hasn't been reflected in a refetched `app` yet). */}
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Liveness Check</p>
             <LivenessStatusCard
-              result={livenessResult ?? persistedLivenessResult(app)}
+              result={persistedLivenessResult(app) ?? livenessResult}
               onRetry={() => {
-                if (!livenessResult && !persistedLivenessResult(app)) {
+                if (!persistedLivenessResult(app) && !livenessResult) {
                   router.push('/apply');
                 } else {
                   setIsLivenessOpen(true);

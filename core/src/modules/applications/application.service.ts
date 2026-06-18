@@ -215,14 +215,20 @@ export async function completeLivenessSession(
       where: { id: applicationId },
       data:  { livenessVerifiedAt: new Date(), livenessConfidence: analysis.confidence },
     });
-    await audit({
-      action: 'LIVENESS_VERIFIED',
-      entity: 'KycApplication',
-      entityId: applicationId,
-      actorId: userId,
-      applicationId,
-      meta: { confidence: analysis.confidence },
-    });
+    // Audit logging is best-effort — the verification has already persisted above,
+    // so a failure here must not turn a genuine success into a 500 for the client.
+    try {
+      await audit({
+        action: 'LIVENESS_VERIFIED',
+        entity: 'KycApplication',
+        entityId: applicationId,
+        actorId: userId,
+        applicationId,
+        meta: { confidence: analysis.confidence },
+      });
+    } catch (err: unknown) {
+      console.error(`[liveness] audit log failed for application ${applicationId} after a successful verification:`, err);
+    }
   }
 
   return {

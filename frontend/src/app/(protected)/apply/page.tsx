@@ -576,8 +576,9 @@ export default function ApplyPage() {
     setLivenessResult(result);
     try { localStorage.setItem('kyc_liveness', JSON.stringify(result)); } catch { /* ignore */ }
 
-    // Upload the captured blob as the SELFIE document
-    if (result.capturedImageBlob && appId) {
+    // Upload the captured blob as the SELFIE document — only on a server-confirmed
+    // pass; a failed check must not register a document as if nothing went wrong.
+    if (result.status === 'verified' && result.capturedImageBlob && appId) {
       const file = new File([result.capturedImageBlob], 'selfie.jpg', { type: 'image/jpeg' });
       await handleFile('SELFIE', file);
     }
@@ -810,7 +811,7 @@ export default function ApplyPage() {
                 <SelfieCaptureCard
                   key={kind}
                   state={docStates[kind]}
-                  livenessResult={livenessResult ?? persistedLivenessResult(app)}
+                  livenessResult={persistedLivenessResult(app) ?? livenessResult}
                   onOpen={() => setIsLivenessModalOpen(true)}
                 />
               ) : (
