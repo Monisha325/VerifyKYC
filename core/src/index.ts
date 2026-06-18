@@ -3,6 +3,19 @@ import 'express-async-errors';
 import dotenv from 'dotenv';
 dotenv.config();
 
+// Last-resort safety net: log the full error before the process dies, so a
+// crash is traceable in Render's logs instead of showing up as a silent
+// restart (e.g. an EventEmitter 'error' with no listener, or a rejected
+// promise outside the Express request lifecycle).
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught exception:', err.stack ?? err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] Unhandled promise rejection:', reason instanceof Error ? reason.stack : reason);
+  process.exit(1);
+});
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';

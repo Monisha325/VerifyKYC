@@ -15,6 +15,12 @@ const redisClient = process.env.UPSTASH_REDIS_URL
   ? new IORedis(process.env.UPSTASH_REDIS_URL, { tls: {} })
   : undefined;
 
+// ioredis throws an uncaught exception if an 'error' event fires with no
+// listener attached — Upstash drops idle connections, so this is not optional.
+redisClient?.on('error', (err) => {
+  console.error('[redis] connection error:', err);
+});
+
 function makeRedisStore(prefix: string) {
   if (!redisClient) return undefined;
   return new RedisStore({
