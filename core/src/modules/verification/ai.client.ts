@@ -265,6 +265,18 @@ export function verifyFaceProfile(
 
 // ── Selfie active-liveness analysis ──────────────────────────────────────────
 
+export interface LivenessAnalysisResult {
+  status:              'verified' | 'failed';
+  confidence:          number;
+  faces_per_snapshot:  number[];
+  message:             string;
+  processing_time_ms:  number;
+}
+
+export function analyzeLiveness(snapshots: string[], challenges: string[]): Promise<LivenessAnalysisResult> {
+  return aiPost<LivenessAnalysisResult>('/ai/liveness/analyze', { snapshots, challenges }, 60_000);
+}
+
 // ── Face detection (selfie quality gate) ──────────────────────────────────────
 
 export interface FaceDetectResult {

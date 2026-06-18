@@ -1,7 +1,9 @@
+import { randomUUID } from 'crypto';
 import { AppStatus, DocStatus } from '@prisma/client';
 import { prisma } from '../../utils/prisma';
 import { audit } from '../../utils/audit';
 import { AppError } from '../../middleware/errorHandler';
+import { analyzeLiveness } from '../verification/ai.client';
 
 // ── Create ────────────────────────────────────────────────────────────────────
 
@@ -159,6 +161,75 @@ export async function cancelApplication(userId: string, appId: string) {
     meta:          { reason: 're-apply' },
   });
   return { success: true };
+}
+
+// ── Liveness check (anti-replay session + server-verified result) ────────────
+// The actual blink/head-turn detection runs client-side via MediaPipe, so the
+// session only proves the client wasn't replaying a stale/fabricated result —
+// the face-presence confirmation itself comes from the AI service, not the client.
+
+const LIVENESS_CHALLENGES     = ['blink', 'head_left', 'head_right'];
+const LIVENESS_SESSION_TTL_MS = 5 * 60 * 1000;
+
+export async function createLivenessSession(applicationId: string, userId: string) {
+  const app = await prisma.kycApplication.findFirst({
+    where:  { id: applicationId, userId },
+    select: { id: true },
+  });
+  if (!app) throw new AppError(404, 'Application not found');
+
+  const sessionId = randomUUID();
+  const expiresAt = new Date(Date.now() + LIVENESS_SESSION_TTL_MS);
+  await prisma.livenessSession.create({
+    data: { sessionId, userId, applicationId, challenges: LIVENESS_CHALLENGES, expiresAt },
+  });
+  return { sessionId, challenges: LIVENESS_CHALLENGES, expiresAt };
+}
+
+export async function completeLivenessSession(
+  applicationId: string,
+  userId:        string,
+  sessionId:     string,
+  snapshots:     string[],
+) {
+  if (!sessionId) throw new AppError(400, 'sessionId is required');
+  if (!Array.isArray(snapshots) || snapshots.length === 0) {
+    throw new AppError(400, 'At least one snapshot is required');
+  }
+
+  const session = await prisma.livenessSession.findUnique({ where: { sessionId } });
+  if (!session || session.userId !== userId || session.applicationId !== applicationId) {
+    throw new AppError(404, 'Liveness session not found');
+  }
+  if (session.used) throw new AppError(409, 'This liveness session has already been used');
+  if (session.expiresAt < new Date()) throw new AppError(410, 'Liveness session expired — please retry');
+
+  // One-time use: consume immediately so this session token can't be replayed,
+  // regardless of what the AI analysis below returns.
+  await prisma.livenessSession.update({ where: { sessionId }, data: { used: true } });
+
+  const analysis = await analyzeLiveness(snapshots, session.challenges);
+
+  if (analysis.status === 'verified') {
+    await prisma.kycApplication.update({
+      where: { id: applicationId },
+      data:  { livenessVerifiedAt: new Date(), livenessConfidence: analysis.confidence },
+    });
+    await audit({
+      action: 'LIVENESS_VERIFIED',
+      entity: 'KycApplication',
+      entityId: applicationId,
+      actorId: userId,
+      applicationId,
+      meta: { confidence: analysis.confidence },
+    });
+  }
+
+  return {
+    status:     analysis.status,
+    confidence: analysis.confidence,
+    message:    analysis.message,
+  };
 }
 
 // ── Transition (exported for use by the Orchestrator) ─────────────────────────

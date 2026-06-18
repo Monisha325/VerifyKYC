@@ -136,9 +136,10 @@ export async function generateReplaceUploadParams(
   const docConfidence      = typeof docRaw?.doc_confidence === 'number' ? docRaw.doc_confidence : null;
   const threshold          = LOW_SCORE_THRESHOLDS[doc.kind] ?? LOW_SCORE_THRESHOLDS['DEFAULT'];
   const isLowScoreVerified = doc.status === DocStatus.VERIFIED && (docConfidence ?? 100) < threshold;
+  const isNeedsReview      = doc.status === DocStatus.NEEDS_REVIEW;
 
-  if (doc.status !== DocStatus.FAILED && !isLowScoreVerified) {
-    throw new AppError(400, 'Only failed or low-score documents can be replaced', 'INVALID_STATUS', {
+  if (doc.status !== DocStatus.FAILED && !isLowScoreVerified && !isNeedsReview) {
+    throw new AppError(400, 'Only failed, low-score, or needs-review documents can be replaced', 'INVALID_STATUS', {
       status: doc.status,
     });
   }
@@ -292,9 +293,10 @@ export async function replaceFailedDocument(
   const oldDocConfidence   = typeof oldDocRaw?.doc_confidence === 'number' ? oldDocRaw.doc_confidence : null;
   const threshold          = LOW_SCORE_THRESHOLDS[oldDoc.kind] ?? LOW_SCORE_THRESHOLDS['DEFAULT'];
   const isLowScoreVerified = oldDoc.status === DocStatus.VERIFIED && (oldDocConfidence ?? 100) < threshold;
+  const isNeedsReview      = oldDoc.status === DocStatus.NEEDS_REVIEW;
 
-  if (oldDoc.status !== DocStatus.FAILED && !isLowScoreVerified) {
-    throw new AppError(400, 'Only failed or low-score documents can be replaced', 'INVALID_STATUS', {
+  if (oldDoc.status !== DocStatus.FAILED && !isLowScoreVerified && !isNeedsReview) {
+    throw new AppError(400, 'Only failed, low-score, or needs-review documents can be replaced', 'INVALID_STATUS', {
       status: oldDoc.status,
     });
   }

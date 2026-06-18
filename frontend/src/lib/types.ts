@@ -52,16 +52,18 @@ export interface KycDocument {
 }
 
 export interface Application {
-  id:           string;
-  userId:       string;
-  status:       AppStatus;
-  overallScore: number | null;
-  scoreBand:    string | null;
-  submittedAt:  string | null;
-  completedAt:  string | null;
-  createdAt:    string;
-  updatedAt:    string;
-  documents:    KycDocument[];
+  id:                 string;
+  userId:             string;
+  status:             AppStatus;
+  overallScore:       number | null;
+  scoreBand:          string | null;
+  submittedAt:        string | null;
+  completedAt:        string | null;
+  createdAt:          string;
+  updatedAt:          string;
+  livenessVerifiedAt: string | null;
+  livenessConfidence: number | null;
+  documents:          KycDocument[];
   reviewDecisions: Array<{
     decision:    Decision;
     reasonCodes: string[];

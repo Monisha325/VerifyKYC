@@ -72,6 +72,8 @@ model KycApplication {
   scoreBand           String?
   claimedAt           DateTime?
   claimedById         String?
+  livenessVerifiedAt  DateTime?
+  livenessConfidence  Float?
   auditEvents         AuditEvent[]
   documents           Document[]
   identityCorrelation IdentityCorrelation?
@@ -192,6 +194,24 @@ model AuditEvent {
   @@index([entity, entityId])
   @@index([createdAt])
   @@map("audit_events")
+}
+
+// Anti-replay session for the camera-based liveness challenge. Issued before
+// the camera opens, consumed exactly once when the result is submitted —
+// table existed since migration 20260607210000 but was never modeled here.
+model LivenessSession {
+  id            String   @id @default(cuid())
+  sessionId     String   @unique
+  userId        String
+  applicationId String
+  challenges    String[]
+  expiresAt     DateTime
+  used          Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([userId])
+  @@map("liveness_sessions")
 }
 
 enum Role {

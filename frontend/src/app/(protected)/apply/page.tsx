@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { api }   from '@/lib/api';
 import type { LivenessVerificationResult } from '@/types/liveness';
+import { persistedLivenessResult } from '@/utils/livenessHelpers';
 
 const CameraModal = dynamic(() => import('@/components/liveness/CameraModal'), { ssr: false });
 import {
@@ -809,7 +810,7 @@ export default function ApplyPage() {
                 <SelfieCaptureCard
                   key={kind}
                   state={docStates[kind]}
-                  livenessResult={livenessResult}
+                  livenessResult={livenessResult ?? persistedLivenessResult(app)}
                   onOpen={() => setIsLivenessModalOpen(true)}
                 />
               ) : (
@@ -826,6 +827,7 @@ export default function ApplyPage() {
           {/* Liveness verification modal */}
           <CameraModal
             isOpen={isLivenessModalOpen}
+            applicationId={appId ?? ''}
             onClose={() => setIsLivenessModalOpen(false)}
             onVerified={handleLivenessVerified}
           />

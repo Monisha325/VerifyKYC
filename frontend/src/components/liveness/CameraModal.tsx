@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
+import { api } from '@/lib/api';
 import type { LivenessVerificationResult } from '@/types/liveness';
 
 // ── Landmark indices (MediaPipe FaceMesh 468-point model) ────────────────────
@@ -32,9 +33,10 @@ type Phase =
   | 'blink' | 'head_left' | 'head_right' | 'capturing' | 'done' | 'error';
 
 interface Props {
-  isOpen:     boolean;
-  onClose:    () => void;
-  onVerified: (result: LivenessVerificationResult) => void;
+  isOpen:        boolean;
+  applicationId: string;
+  onClose:       () => void;
+  onVerified:    (result: LivenessVerificationResult) => void;
 }
 
 // ── Math helpers ──────────────────────────────────────────────────────────────
@@ -113,7 +115,7 @@ async function getCamera(): Promise<MediaStream> {
 type FaceMeshAny = any;
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function CameraModal({ isOpen, onClose, onVerified }: Props) {
+export default function CameraModal({ isOpen, applicationId, onClose, onVerified }: Props) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -141,6 +143,7 @@ export default function CameraModal({ isOpen, onClose, onVerified }: Props) {
   const abortRef          = useRef(false);
   const sendingRef        = useRef(false);
   const sessionRef        = useRef(0);
+  const serverSessionIdRef = useRef<string | null>(null);
   const phaseRef          = useRef<Phase>('idle');
   const snapsRef          = useRef<string[]>([]);
 
@@ -690,6 +693,10 @@ export default function CameraModal({ isOpen, onClose, onVerified }: Props) {
       setModelReady(false);
       setModelLoadKey(prev => prev + 1);
     }
+    serverSessionIdRef.current = null;
+    api.post<{ sessionId: string }>(`/applications/${applicationId}/liveness/session`)
+      .then(({ data }) => { serverSessionIdRef.current = data.sessionId; })
+      .catch(() => { serverSessionIdRef.current = null; });
     start();
     return stop;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -733,20 +740,44 @@ export default function CameraModal({ isOpen, onClose, onVerified }: Props) {
     const blob = dataURLtoBlob(dataURL);
     go('done');
 
-    const result: LivenessVerificationResult = {
-      status:               'verified',
-      confidence:           100,
+    const challengeResults: LivenessVerificationResult['challenges'] = [
+      { type: 'blink',      detected: true, confidence: 0.95, detectedAt: challengeTimestampsRef.current.blink      ?? Date.now() },
+      { type: 'head_left',  detected: true, confidence: 0.95, detectedAt: challengeTimestampsRef.current.head_left  ?? Date.now() },
+      { type: 'head_right', detected: true, confidence: 0.95, detectedAt: challengeTimestampsRef.current.head_right ?? Date.now() },
+    ];
+
+    const buildResult = (status: 'verified' | 'failed', confidence: number, failureReason?: string): LivenessVerificationResult => ({
+      status,
+      confidence,
       capturedImageBlob:    blob,
       capturedImageDataURL: dataURL,
-      challenges: [
-        { type: 'blink',      detected: true, confidence: 0.95, detectedAt: challengeTimestampsRef.current.blink      ?? Date.now() },
-        { type: 'head_left',  detected: true, confidence: 0.95, detectedAt: challengeTimestampsRef.current.head_left  ?? Date.now() },
-        { type: 'head_right', detected: true, confidence: 0.95, detectedAt: challengeTimestampsRef.current.head_right ?? Date.now() },
-      ],
-      verifiedAt:        new Date().toISOString(),
-      sessionDurationMs: Date.now() - sessionRef.current,
-    };
-    onVerified(result);
+      challenges:           challengeResults,
+      failureReason,
+      verifiedAt:           new Date().toISOString(),
+      sessionDurationMs:    Date.now() - sessionRef.current,
+    });
+
+    // The actual pass/fail call is made server-side (real face-presence check
+    // against a one-time session) — this component only reports the outcome.
+    (async () => {
+      const sessionId = serverSessionIdRef.current;
+      if (!sessionId) {
+        onVerified(buildResult('failed', 0, 'Could not start a secure verification session — check your connection and try again.'));
+        return;
+      }
+      const snapshots = snapsRef.current.filter((s): s is string => !!s && s.length > 2000).slice(0, 5);
+      try {
+        const { data } = await api.post<{ status: 'verified' | 'failed'; confidence: number; message: string }>(
+          `/applications/${applicationId}/liveness`,
+          { sessionId, snapshots },
+        );
+        onVerified(buildResult(data.status, data.confidence, data.status === 'failed' ? data.message : undefined));
+      } catch (err: unknown) {
+        const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+          ?? 'Could not verify your selfie — check your connection and try again.';
+        onVerified(buildResult('failed', 0, msg));
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 

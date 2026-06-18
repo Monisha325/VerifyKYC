@@ -1,7 +1,26 @@
-import type { LivenessStep } from '@/types/liveness';
+import type { LivenessStep, LivenessVerificationResult } from '@/types/liveness';
 
 export function selectChallenges(): Array<'blink' | 'smile' | 'mouth_open'> {
   return ['blink', 'smile', 'mouth_open'];
+}
+
+// Backend-persisted fallback for the liveness card when no fresh, same-session
+// result exists in local state/localStorage (e.g. after a reload or on a
+// different device) — without this, the card always reads as "not completed"
+// once localStorage is empty, even though the check passed previously.
+export function persistedLivenessResult(
+  app: { livenessVerifiedAt: string | null; livenessConfidence: number | null } | null | undefined,
+): LivenessVerificationResult | null {
+  if (!app?.livenessVerifiedAt) return null;
+  return {
+    status:               'verified',
+    confidence:           app.livenessConfidence ?? 0,
+    capturedImageBlob:    null,
+    capturedImageDataURL: null,
+    challenges:           [],
+    verifiedAt:           app.livenessVerifiedAt,
+    sessionDurationMs:    0,
+  };
 }
 
 export function getInstructionForStep(step: LivenessStep): {

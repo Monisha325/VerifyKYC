@@ -5,6 +5,8 @@ import {
   submitApplication,
   getApplication,
   cancelApplication,
+  createLivenessSession,
+  completeLivenessSession,
 } from './application.service';
 import { enqueueApplication } from '../verification/orchestrator';
 
@@ -38,5 +40,16 @@ export async function getStatus(req: Request, res: Response) {
 
 export async function cancel(req: Request, res: Response) {
   const result = await cancelApplication(req.user!.sub, req.params.id);
+  res.json(result);
+}
+
+export async function startLiveness(req: Request, res: Response) {
+  const result = await createLivenessSession(req.params.id, req.user!.sub);
+  res.status(201).json(result);
+}
+
+export async function verifyLiveness(req: Request, res: Response) {
+  const { sessionId, snapshots } = req.body as { sessionId?: string; snapshots?: string[] };
+  const result = await completeLivenessSession(req.params.id, req.user!.sub, sessionId ?? '', snapshots ?? []);
   res.json(result);
 }

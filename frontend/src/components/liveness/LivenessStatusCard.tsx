@@ -67,8 +67,12 @@ export default function LivenessStatusCard({ result, onRetry }: Props) {
           {isVerified && (
             <div className="flex items-center gap-3 text-xs text-gray-500">
               <span>Score: <strong className="text-emerald-600">{result.confidence.toFixed(1)}%</strong></span>
-              <span>·</span>
-              <span>{result.challenges.length} challenge{result.challenges.length !== 1 ? 's' : ''} passed</span>
+              {result.challenges.length > 0 && (
+                <>
+                  <span>·</span>
+                  <span>{result.challenges.length} challenge{result.challenges.length !== 1 ? 's' : ''} passed</span>
+                </>
+              )}
             </div>
           )}
 

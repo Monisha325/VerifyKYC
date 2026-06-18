@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import dynamic                          from 'next/dynamic';
 import { useRouter }                    from 'next/navigation';
 import type { LivenessVerificationResult } from '@/types/liveness';
+import { persistedLivenessResult } from '@/utils/livenessHelpers';
 
 const CameraModal       = dynamic(() => import('@/components/liveness/CameraModal'), { ssr: false });
 const LivenessStatusCard = dynamic(() => import('@/components/liveness/LivenessStatusCard'), { ssr: false });
@@ -141,7 +142,7 @@ function DocConfidenceBar({
   const flags      = raw?.flags ?? [];
   const isVerified   = doc.status === 'VERIFIED';
   const isNeedsReview = doc.status === 'NEEDS_REVIEW';
-  const isFailed   = doc.status === 'FAILED';
+  const isFailed   = doc.status === 'FAILED' || doc.status === 'NEEDS_REVIEW';
   // Show score bar for any status where the pipeline completed and scored the document
   const isScored   = isVerified || isNeedsReview || isFailed;
 
@@ -314,6 +315,7 @@ function DocConfidenceBar({
       {doc.kind === 'SELFIE' && (
       <CameraModal
         isOpen={isCameraOpen}
+        applicationId={appId}
         onClose={() => setIsCameraOpen(false)}
         onVerified={async (result: LivenessVerificationResult) => {
           setIsCameraOpen(false);
@@ -338,11 +340,22 @@ function DocConfidenceBar({
               sha256:    hash,
             });
             setReuploadState('processing');
-            // Give the pipeline ~45s to run, then refresh
-            setTimeout(() => {
-              setReuploadState('done');
-              setTimeout(() => { setReuploadState('idle'); onRefresh(); }, 2000);
-            }, 45_000);
+            const MAX_POLLS = 60;
+            let polls = 0;
+            const poll = async () => {
+              if (polls++ >= MAX_POLLS) { setReuploadState('idle'); onRefresh(); return; }
+              try {
+                const { data: appData } = await api.get<Application>(`/applications/${appId}`);
+                const selfie = appData.documents?.find((d: KycDocument) => d.kind === 'SELFIE');
+                if (!selfie || selfie.status === 'VERIFIED' || selfie.status === 'FAILED' || selfie.status === 'NEEDS_REVIEW') {
+                  setReuploadState('done');
+                  setTimeout(() => { setReuploadState('idle'); onRefresh(); }, 2000);
+                  return;
+                }
+              } catch { /* keep polling */ }
+              setTimeout(poll, 5_000);
+            };
+            setTimeout(poll, 5_000);
           } catch (err) {
             console.error('[verify-again] replace failed:', err);
             setReuploadState('idle');
@@ -694,13 +707,17 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* ── Liveness verification card ── */}
+          {/* ── Liveness verification card ──
+              livenessResult (this session's fresh capture, incl. thumbnail) takes
+              priority; otherwise fall back to the backend-persisted result so the
+              card survives a reload / different browser instead of resetting to
+              "not completed" whenever localStorage is empty. */}
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Liveness Check</p>
             <LivenessStatusCard
-              result={livenessResult}
+              result={livenessResult ?? persistedLivenessResult(app)}
               onRetry={() => {
-                if (!livenessResult) {
+                if (!livenessResult && !persistedLivenessResult(app)) {
                   router.push('/apply');
                 } else {
                   setIsLivenessOpen(true);
@@ -712,6 +729,7 @@ export default function DashboardPage() {
           {/* Camera modal for re-verification */}
           <CameraModal
             isOpen={isLivenessOpen}
+            applicationId={app.id}
             onClose={() => setIsLivenessOpen(false)}
             onVerified={result => {
               setIsLivenessOpen(false);
