@@ -36,7 +36,7 @@ export default function AppShell({ children, wide = false }: { children: React.R
     ? [
         { href: '/admin/queue', icon: ClipboardList, label: 'Review Queue' },
         ...(isAdmin ? [{ href: '/admin/audit', icon: ScrollText, label: 'Audit Trail' }] : []),
-        { href: '/chat', icon: Bot, label: 'Agent Chat' },
+        { href: '/admin/chat', icon: Bot, label: 'Agent Chat' },
       ]
     : [
         { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
