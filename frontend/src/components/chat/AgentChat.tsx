@@ -9,11 +9,16 @@ import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
 
+interface ToolOption {
+  name:  string;
+  label: string;
+}
+
 interface AgentResponse {
   agent?: string;
   content: Array<{ type: string; text: string }>;
   isError?: boolean;
-  availableTools?: string[];
+  availableTools?: ToolOption[];
 }
 
 interface Message {
@@ -271,7 +276,7 @@ function AgentContent({ msg, onTool, allowedTools, appLoading }: { msg: Message;
 
   // Routing response — orchestrator didn't execute a tool, just identified the agent
   if (parsed && Array.isArray(parsed.availableTools)) {
-    const safeTools = (parsed.availableTools as string[]).filter(t => allowedTools.has(t));
+    const safeTools = (parsed.availableTools as ToolOption[]).filter(t => allowedTools.has(t.name));
     return (
       <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tl-sm bg-gray-50 border border-gray-100 space-y-3">
         <p className="text-sm text-gray-700">
@@ -281,23 +286,23 @@ function AgentContent({ msg, onTool, allowedTools, appLoading }: { msg: Message;
           <div>
             <p className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
               <Wrench className="w-3 h-3" />
-              Available tools
+              Available actions
             </p>
             <div className="flex flex-wrap gap-1.5">
               {safeTools.map(t => (
                 <button
-                  key={t}
+                  key={t.name}
                   type="button"
-                  onClick={() => !appLoading && onTool(t)}
+                  onClick={() => !appLoading && onTool(t.name)}
                   disabled={appLoading}
                   className={cn(
-                    'px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-mono transition-all',
+                    'px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-medium transition-all',
                     appLoading
                       ? 'opacity-50 cursor-not-allowed'
                       : 'hover:bg-brand-navy/15 active:scale-95 cursor-pointer',
                   )}
                 >
-                  {t}
+                  {t.label}
                 </button>
               ))}
             </div>

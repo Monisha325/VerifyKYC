@@ -10,6 +10,38 @@ const AUTH_TOOL_NAMES    = new Set(['register_user', 'login_user', 'verify_email
 const KYC_TOOL_NAMES     = new Set(['create_application', 'get_upload_params', 'register_document', 'submit_application', 'get_application_status', 'get_application', 'get_document', 'cancel_application']);
 const MEMBERS_TOOL_NAMES = new Set(['get_review_queue', 'get_evidence_bundle', 'claim_application', 'submit_decision', 'get_audit_trail']);
 
+// Human-readable labels for the tool-selection buttons shown in chat when a
+// message is routed but not specific enough to dispatch automatically.
+const TOOL_LABELS: Record<string, string> = {
+  // auth
+  register_user:          'Create an account',
+  login_user:              'Log in',
+  verify_email:            'Verify my email',
+  resend_otp:              'Resend verification code',
+  refresh_token:           'Refresh my session',
+  logout:                  'Log out',
+  get_current_user:        'View my profile',
+  // kyc
+  create_application:      'Start a new KYC application',
+  get_upload_params:       'Get document upload link',
+  register_document:       'Register an uploaded document',
+  submit_application:      'Submit my application',
+  get_application_status:  'Check my application status',
+  get_application:         'View my full application',
+  get_document:            'View a document',
+  cancel_application:      'Cancel my application',
+  // members
+  get_review_queue:        'Show the review queue',
+  get_evidence_bundle:     'View evidence bundle',
+  claim_application:       'Claim this application',
+  submit_decision:         'Submit a decision',
+  get_audit_trail:         'View audit trail',
+};
+
+function toToolOptions(names: Iterable<string>) {
+  return [...names].map(name => ({ name, label: TOOL_LABELS[name] ?? name }));
+}
+
 // ── Keyword regex patterns (fallback for natural language messages) ────────────
 
 const AUTH_PATTERNS = [
@@ -88,10 +120,10 @@ export async function runOrchestrator(
         agent,
         message: `Routed to ${agent} agent. Provide a specific tool name via the "tool" field to execute an action.`,
         availableTools: agent === 'auth'
-          ? [...AUTH_TOOL_NAMES]
+          ? toToolOptions(AUTH_TOOL_NAMES)
           : agent === 'kyc'
-            ? [...KYC_TOOL_NAMES]
-            : [...MEMBERS_TOOL_NAMES],
+            ? toToolOptions(KYC_TOOL_NAMES)
+            : toToolOptions(MEMBERS_TOOL_NAMES),
       }),
     }],
   };
