@@ -74,7 +74,7 @@ app.get('/health', async (_req, res) => {
       DATABASE_URL:  !!process.env.DATABASE_URL,
       ACCESS_SECRET: !!process.env.ACCESS_SECRET,
       REFRESH_SECRET: !!process.env.REFRESH_SECRET,
-      RESEND_API_KEY: !!process.env.RESEND_API_KEY,
+      SMTP_HOST:     !!process.env.SMTP_HOST,
       AI_SERVICE_URL:  process.env.AI_SERVICE_URL || false,
       FRONTEND_ORIGIN: process.env.FRONTEND_ORIGIN || false,
       NODE_ENV:        process.env.NODE_ENV,

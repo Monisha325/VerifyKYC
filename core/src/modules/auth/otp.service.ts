@@ -1,14 +1,21 @@
-import crypto  from 'crypto';
-import { Resend } from 'resend';
+import crypto      from 'crypto';
+import nodemailer   from 'nodemailer';
 import { prisma }   from '../../utils/prisma';
 import { AppError } from '../../middleware/errorHandler';
 
-// Created lazily so a missing RESEND_API_KEY doesn't crash the service at startup.
-let _resend: Resend | null = null;
-function getResend(): Resend | null {
-  if (!process.env.RESEND_API_KEY) return null;
-  if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY);
-  return _resend;
+// Created lazily so a missing SMTP_HOST doesn't crash the service at startup.
+let _transport: nodemailer.Transporter | null = null;
+function getTransport(): nodemailer.Transporter | null {
+  if (!process.env.SMTP_HOST) return null;
+  if (!_transport) {
+    _transport = nodemailer.createTransport({
+      host:   process.env.SMTP_HOST,
+      port:   Number(process.env.SMTP_PORT) || 587,
+      secure: process.env.SMTP_SECURE === 'true',
+      auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+  }
+  return _transport;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -107,26 +114,22 @@ export async function sendOtpEmail(email: string, otp: string): Promise<void> {
   console.log('⏰ Expires:  10 minutes');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-  if (!process.env.RESEND_API_KEY) {
-    console.log('[OTP] ⚠️  RESEND_API_KEY not set — email not sent.');
+  const transport = getTransport();
+  if (!transport) {
+    console.log('[OTP] ⚠️  SMTP_HOST not set — email not sent.');
     return;
   }
 
   try {
-    const { data, error } = await getResend()!.emails.send({
-      from:    'VeriKYC <onboarding@resend.dev>',
-      to:      [email],
+    const info = await transport.sendMail({
+      from:    process.env.SMTP_FROM || process.env.SMTP_USER,
+      to:      email,
       subject: 'Your VeriKYC Verification Code',
       html:    buildHtml(otp),
     });
 
-    if (error) {
-      console.error('[OTP] ❌ Resend error:', error.message);
-      return;
-    }
-
     console.log('[OTP] ✅ OTP email sent to:', email);
-    console.log('[OTP] 📨 Message ID:', data?.id);
+    console.log('[OTP] 📨 Message ID:', info.messageId);
   } catch (err: unknown) {
     const e = err as { message?: string };
     console.error('[OTP] ❌ sendOtpEmail failed:', e.message ?? String(err));
