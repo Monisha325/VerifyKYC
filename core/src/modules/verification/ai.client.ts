@@ -274,7 +274,10 @@ export interface LivenessAnalysisResult {
 }
 
 export function analyzeLiveness(snapshots: string[], challenges: string[]): Promise<LivenessAnalysisResult> {
-  return aiPost<LivenessAnalysisResult>('/ai/liveness/analyze', { snapshots, challenges }, 60_000);
+  // 3 min — liveness is often the first AI call in a session, so it's the one
+  // most likely to hit a cold Railway container (same service as the OCR/
+  // ArcFace endpoints above, which already need 5–10 min on first call).
+  return aiPost<LivenessAnalysisResult>('/ai/liveness/analyze', { snapshots, challenges }, 180_000);
 }
 
 // ── Face detection (selfie quality gate) ──────────────────────────────────────

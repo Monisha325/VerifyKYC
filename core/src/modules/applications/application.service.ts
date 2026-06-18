@@ -208,7 +208,13 @@ export async function completeLivenessSession(
   // regardless of what the AI analysis below returns.
   await prisma.livenessSession.update({ where: { sessionId }, data: { used: true } });
 
-  const analysis = await analyzeLiveness(snapshots, session.challenges);
+  let analysis;
+  try {
+    analysis = await analyzeLiveness(snapshots, session.challenges);
+  } catch (err: unknown) {
+    console.error(`[liveness] analyzeLiveness call failed for application ${applicationId}:`, err);
+    throw new AppError(503, 'Verification service is temporarily unavailable — please try again in a moment.');
+  }
 
   if (analysis.status === 'verified') {
     await prisma.kycApplication.update({
