@@ -17,6 +17,7 @@
     "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
+    "@getbrevo/brevo": "^5.0.4",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@node-rs/argon2": "^2.0.0",
     "@prisma/client": "^5.14.0",
