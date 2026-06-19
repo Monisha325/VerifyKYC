@@ -286,12 +286,13 @@ function SelfieCaptureCard({
   const busy    = ['uploading','registering','getting-params','validating'].includes(state.status);
   const preview = isDone ? (state as Extract<DocUploadState, { status: 'done' }>).preview : null;
   const livenessVerified = livenessResult?.status === 'verified';
+  const livenessFailed   = livenessResult?.status === 'failed' && !!livenessResult.failureReason;
 
   return (
     <div className={cn(
       'rounded-2xl border-2 transition-all duration-200 overflow-hidden',
-      isDone    ? 'border-emerald-200 bg-emerald-50/40'
-      : isError ? 'border-rose-200 bg-rose-50/30'
+      isDone                    ? 'border-emerald-200 bg-emerald-50/40'
+      : isError || livenessFailed ? 'border-rose-200 bg-rose-50/30'
       : 'border-gray-200 bg-white',
     )}>
       <div className="p-4">
@@ -300,8 +301,8 @@ function SelfieCaptureCard({
             <p className="text-sm font-semibold text-gray-900">Selfie</p>
             <p className="text-xs text-gray-400 mt-0.5 leading-snug">Live face capture · liveness check required</p>
           </div>
-          {isDone  && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0 mt-0.5" />}
-          {isError && <AlertCircle  className="w-5 h-5 text-rose-500 flex-shrink-0 mt-0.5"   />}
+          {isDone                      && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0 mt-0.5" />}
+          {(isError || livenessFailed) && <AlertCircle  className="w-5 h-5 text-rose-500 flex-shrink-0 mt-0.5"   />}
         </div>
 
         {/* Preview after successful upload */}
@@ -327,6 +328,20 @@ function SelfieCaptureCard({
           <div className="relative rounded-xl overflow-hidden bg-gray-100 aspect-[3/2] flex flex-col items-center justify-center gap-2">
             <Loader2 className="w-6 h-6 text-brand-navy/40 animate-spin" />
             <span className="text-xs font-medium text-gray-500">Uploading selfie...</span>
+          </div>
+        ) : livenessFailed ? (
+          /* Verification was attempted and failed — distinct from the untried state */
+          <div className="relative rounded-xl overflow-hidden bg-rose-50 border-2 border-dashed border-rose-200 aspect-[3/2] flex flex-col items-center justify-center gap-2 px-4 text-center">
+            <AlertCircle className="w-6 h-6 text-rose-500" />
+            <p className="text-xs font-semibold text-rose-700">Verification failed</p>
+            <p className="text-[11px] text-rose-600 leading-snug">{livenessResult!.failureReason}</p>
+            <button
+              type="button"
+              onClick={onOpen}
+              className="mt-1 text-xs font-semibold text-rose-700 hover:underline"
+            >
+              Try Again →
+            </button>
           </div>
         ) : (
           /* Open camera CTA */
