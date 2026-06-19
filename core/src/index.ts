@@ -74,7 +74,7 @@ app.get('/health', async (_req, res) => {
       DATABASE_URL:  !!process.env.DATABASE_URL,
       ACCESS_SECRET: !!process.env.ACCESS_SECRET,
       REFRESH_SECRET: !!process.env.REFRESH_SECRET,
-      RESEND_API_KEY: !!process.env.RESEND_API_KEY,
+      BREVO_API_KEY: !!process.env.BREVO_API_KEY,
       AI_SERVICE_URL:  process.env.AI_SERVICE_URL || false,
       FRONTEND_ORIGIN: process.env.FRONTEND_ORIGIN || false,
       NODE_ENV:        process.env.NODE_ENV,
@@ -109,8 +109,8 @@ const server = app.listen(PORT, () => {
       missing.push('AI_SERVICE_URL (still points to localhost — set to Railway URL)');
     if (!process.env.INTERNAL_TOKEN)
       missing.push('INTERNAL_TOKEN');
-    if (!process.env.RESEND_API_KEY)
-      missing.push('RESEND_API_KEY');
+    if (!process.env.BREVO_API_KEY)
+      missing.push('BREVO_API_KEY');
     if (!process.env.FRONTEND_ORIGIN || process.env.FRONTEND_ORIGIN.includes('localhost'))
       missing.push('FRONTEND_ORIGIN (still points to localhost — set to Vercel URL)');
 

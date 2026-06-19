@@ -51,11 +51,10 @@ services:
       # Upstash Redis — rate-limiter backing store (set in dashboard)
       - key: UPSTASH_REDIS_URL
         sync: false
-      # Resend — transactional email for OTP
-      - key: RESEND_API_KEY
+      # Brevo — transactional email for OTP. Sends over HTTPS via the
+      # Transactional Email API, not SMTP — avoids Render's outbound SMTP
+      # port block.
+      - key: BREVO_API_KEY
         sync: false
-      # Optional — defaults to the onboarding@resend.dev sandbox sender until
-      # a verified domain is set up (sandbox can only deliver to the Resend
-      # account owner's own email, not real recipients)
-      - key: RESEND_FROM_EMAIL
+      - key: BREVO_FROM_EMAIL
         sync: false

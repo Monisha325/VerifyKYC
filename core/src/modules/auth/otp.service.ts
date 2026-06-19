@@ -1,20 +1,22 @@
-import crypto  from 'crypto';
-import { Resend } from 'resend';
+import crypto from 'crypto';
+import { BrevoClient } from '@getbrevo/brevo';
 import { prisma }   from '../../utils/prisma';
 import { AppError } from '../../middleware/errorHandler';
 
-// Created lazily so a missing RESEND_API_KEY doesn't crash the service at startup.
-let _resend: Resend | null = null;
-function getResend(): Resend | null {
-  if (!process.env.RESEND_API_KEY) return null;
-  if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY);
-  return _resend;
+// Brevo's Transactional Email API (HTTPS) — not SMTP. Render's free tier
+// blocks outbound SMTP ports (25/465/587), so OTP delivery goes through
+// Brevo's REST API instead, authenticated with an API key.
+//
+// NB: @getbrevo/brevo v5 replaced the old `TransactionalEmailsApi` class
+// (new TransactionalEmailsApi() + setApiKey()) with a single `BrevoClient`
+// exposing `.transactionalEmails.sendTransacEmail(...)` — the method name
+// survived the redesign, the class/instantiation pattern did not.
+let _brevo: BrevoClient | null = null;
+function getBrevoClient(): BrevoClient | null {
+  if (!process.env.BREVO_API_KEY) return null;
+  if (!_brevo) _brevo = new BrevoClient({ apiKey: process.env.BREVO_API_KEY });
+  return _brevo;
 }
-
-// Sandbox sender until a verified domain is configured — swap via env var,
-// not by editing this default (Render's free tier blocks outbound SMTP, so
-// email goes through Resend's HTTP API instead of nodemailer/SMTP).
-const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'VeriKYC <onboarding@resend.dev>';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -112,26 +114,26 @@ export async function sendOtpEmail(email: string, otp: string): Promise<void> {
   console.log('⏰ Expires:  10 minutes');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-  if (!process.env.RESEND_API_KEY) {
-    console.log('[OTP] ⚠️  RESEND_API_KEY not set — email not sent.');
+  const brevo = getBrevoClient();
+  if (!brevo) {
+    console.log('[OTP] ⚠️  BREVO_API_KEY not set — email not sent.');
+    return;
+  }
+  if (!process.env.BREVO_FROM_EMAIL) {
+    console.error('[OTP] ❌ BREVO_FROM_EMAIL not set — cannot send without a sender address.');
     return;
   }
 
   try {
-    const { data, error } = await getResend()!.emails.send({
-      from:    RESEND_FROM_EMAIL,
-      to:      [email],
-      subject: 'Your VeriKYC Verification Code',
-      html:    buildHtml(otp),
+    const result = await brevo.transactionalEmails.sendTransacEmail({
+      sender:      { email: process.env.BREVO_FROM_EMAIL, name: 'VeriKYC' },
+      to:          [{ email }],
+      subject:     'Your VeriKYC Verification Code',
+      htmlContent: buildHtml(otp),
     });
 
-    if (error) {
-      console.error('[OTP] ❌ Resend error:', error.message);
-      return;
-    }
-
     console.log('[OTP] ✅ OTP email sent to:', email);
-    console.log('[OTP] 📨 Message ID:', data?.id);
+    console.log('[OTP] 📨 Message ID:', result.messageId);
   } catch (err: unknown) {
     const e = err as { message?: string };
     console.error('[OTP] ❌ sendOtpEmail failed:', e.message ?? String(err));
