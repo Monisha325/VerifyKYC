@@ -54,3 +54,8 @@ services:
       # Resend — transactional email for OTP
       - key: RESEND_API_KEY
         sync: false
+      # Optional — defaults to the onboarding@resend.dev sandbox sender until
+      # a verified domain is set up (sandbox can only deliver to the Resend
+      # account owner's own email, not real recipients)
+      - key: RESEND_FROM_EMAIL
+        sync: false
