@@ -34,7 +34,6 @@ router = APIRouter(dependencies=[Depends(verify_token)])
 _deepface_lock:   threading.Lock = threading.Lock()
 _deepface_module: Any            = None
 _arcface_ready:   bool           = False
-_arcface_event:   asyncio.Event  = asyncio.Event()   # set() by warmup thread when model is ready
 _DETECTOR_BACKEND                = "yunet"   # DNN-based; more robust than Haar for selfies
 
 # ── ArcFace match via DeepFace.verify() ──────────────────────────────────────
@@ -733,19 +732,10 @@ async def verify_face_profile(req: FaceVerifyProfileRequest) -> FaceVerifyProfil
     if not req.doc_urls:
         raise HTTPException(status_code=400, detail={"error": "doc_urls must not be empty"})
 
-    # Wait for ArcFace warmup rather than fast-failing — gives cold starts up to
-    # 120 s to finish loading before giving up and returning unavailable.
-    if not settings.skip_face_model and not _arcface_event.is_set():
-        print("[FACE PROFILE] Waiting for ArcFace warmup to complete (max 120s)...")
-        try:
-            await asyncio.wait_for(_arcface_event.wait(), timeout=300.0)
-            print("[FACE PROFILE] Model ready — proceeding with face match")
-        except asyncio.TimeoutError:
-            print("[FACE PROFILE] Warmup timed out after 120s — returning unavailable")
-            return FaceVerifyProfileResponse(
-                scores=[], average_score=0.0,
-                profile_verification_pct=0.0, flag="face_verification_unavailable",
-            )
+    # ArcFace loads lazily on first use inside _run_verify_profile (via
+    # _ensure_arcface_ready), which already returns a graceful
+    # "face_verification_unavailable" flag if loading fails — no separate
+    # pre-warm wait needed here.
 
     try:
         images = await asyncio.gather(

@@ -64,9 +64,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
-# ── Startup: warm up EasyOCR so the first real document call is never cold ────
-# Runs in a background thread — health check passes immediately, model loads
-# in the background over the next 60-120 s.
+# ── Startup ────────────────────────────────────────────────────────────────────
+# No heavy model loading here. EasyOCR (app/routers/ocr.py) and DeepFace/ArcFace
+# (app/routers/face.py) are loaded lazily — only on the first request that
+# actually needs them — so the app finishes startup and /health responds
+# immediately, regardless of memory/time it'd take to load those models.
 
 @app.on_event("startup")
 async def _print_routes() -> None:
@@ -75,60 +77,6 @@ async def _print_routes() -> None:
         path    = getattr(route, "path",    None)
         if methods and path:
             print(f"[ROUTE] {methods} {path}")
-
-
-@app.on_event("startup")
-async def _warmup() -> None:
-    import threading
-    import asyncio as _asyncio
-    import os as _os
-    import numpy as _np
-    from app.config import settings
-    from app.routers import face as _face_mod
-
-    # EasyOCR — background thread so it doesn't delay startup or health checks
-    def _load_ocr() -> None:
-        try:
-            from app.routers.ocr import _get_reader
-            print("[WARMUP] Loading EasyOCR reader (background)…")
-            _get_reader(("en",))
-            print("[WARMUP] EasyOCR ready.")
-        except Exception as exc:
-            print(f"[WARMUP] EasyOCR load failed: {exc}")
-    threading.Thread(target=_load_ocr, daemon=True).start()
-
-    # ArcFace — blocks startup so uvicorn only reaches "Application startup complete"
-    # after the model is fully loaded. No request can arrive before model is ready.
-    _weights = _os.path.expanduser("~/.deepface/weights/")
-    _cached = (
-        _os.path.exists(_weights)
-        and any("arcface" in f.lower() for f in _os.listdir(_weights))
-    )
-    print(f"[WARMUP] ArcFace cached on disk: {_cached}")
-
-    if not settings.skip_face_model:
-        print("[WARMUP] Loading ArcFace model — server will not accept requests until ready...")
-
-        def _load_arcface() -> None:
-            from deepface import DeepFace as _DeepFace
-            _DeepFace.represent(
-                img_path=_np.zeros((112, 112, 3), dtype=_np.uint8),
-                model_name="ArcFace",
-                enforce_detection=False,
-            )
-            _face_mod._deepface_module = _DeepFace
-            _face_mod._arcface_ready   = True
-            print("[WARMUP] ArcFace model ready ✓ — server now accepting requests")
-
-        try:
-            await _asyncio.get_running_loop().run_in_executor(None, _load_arcface)
-        except Exception as exc:
-            print(f"[WARMUP] ArcFace load failed: {exc}")
-        finally:
-            _face_mod._arcface_event.set()   # in event loop — direct call, no call_soon_threadsafe
-    else:
-        print("[WARMUP] SKIP_FACE_MODEL=true — skipping ArcFace warmup")
-        _face_mod._arcface_event.set()
 
 
 @app.on_event("shutdown")
