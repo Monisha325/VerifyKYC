@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import dynamic                          from 'next/dynamic';
 import { useRouter }                    from 'next/navigation';
 import type { LivenessVerificationResult } from '@/types/liveness';
-import { persistedLivenessResult } from '@/utils/livenessHelpers';
+import { mergeLivenessResult } from '@/utils/livenessHelpers';
 
 const CameraModal       = dynamic(() => import('@/components/liveness/CameraModal'), { ssr: false });
 const LivenessStatusCard = dynamic(() => import('@/components/liveness/LivenessStatusCard'), { ssr: false });
@@ -710,16 +710,19 @@ export default function DashboardPage() {
           )}
 
           {/* ── Liveness verification card ──
-              A confirmed backend "verified" record always wins, even over a
-              stale/failed local result — only fall back to the local result
-              when the backend has no record at all (e.g. a fresh same-session
-              attempt that hasn't been reflected in a refetched `app` yet). */}
+              The backend-confirmed record is the source of truth for
+              status/confidence/verifiedAt (so a confirmed "verified" can
+              never be shadowed by a stale/failed local cache), but the
+              backend never stores the captured image — mergeLivenessResult
+              falls back to the local result's image fields so a fresh
+              capture's photo isn't blanked out by the image-less backend
+              record. */}
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Liveness Check</p>
             <LivenessStatusCard
-              result={persistedLivenessResult(app) ?? livenessResult}
+              result={mergeLivenessResult(app, livenessResult)}
               onRetry={() => {
-                if (!persistedLivenessResult(app) && !livenessResult) {
+                if (!mergeLivenessResult(app, livenessResult)) {
                   router.push('/apply');
                 } else {
                   setIsLivenessOpen(true);

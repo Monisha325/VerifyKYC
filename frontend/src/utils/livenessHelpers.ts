@@ -23,6 +23,26 @@ export function persistedLivenessResult(
   };
 }
 
+// Combines the two liveness sources instead of letting either one
+// unconditionally win: the backend-confirmed record (status/confidence/
+// verifiedAt) is the source of truth so a confirmed "verified" can never be
+// shadowed by a stale/failed local cache, but the backend never stores the
+// captured image — so the image fields fall back to the local result
+// whenever the backend one is null and a local value is available.
+export function mergeLivenessResult(
+  app: { livenessVerifiedAt: string | null; livenessConfidence: number | null } | null | undefined,
+  localResult: LivenessVerificationResult | null,
+): LivenessVerificationResult | null {
+  const backendResult = persistedLivenessResult(app);
+  if (!backendResult) return localResult;
+
+  return {
+    ...backendResult,
+    capturedImageBlob:    backendResult.capturedImageBlob    ?? localResult?.capturedImageBlob    ?? null,
+    capturedImageDataURL: backendResult.capturedImageDataURL ?? localResult?.capturedImageDataURL ?? null,
+  };
+}
+
 export function getInstructionForStep(step: LivenessStep): {
   title: string;
   subtitle: string;
