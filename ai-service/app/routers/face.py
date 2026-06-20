@@ -2,11 +2,17 @@
 POST /ai/face/detect  — locate faces in an image
 POST /ai/face/verify  — compare selfie against ID-document photo
 
-DeepFace is imported on first call inside _get_deepface() — no heavy top-level
-import statement appears in this file, keeping startup memory under 512 MB.
+Face matching uses dlib's ResNet face-encoder via the `face_recognition`
+wrapper — not DeepFace/TensorFlow/ArcFace. The previous TensorFlow+DeepFace
+stack realistically needs 700MB+ RSS once ArcFace weights are loaded, which
+OOM-crashed Render's free tier (512MB ceiling). dlib's encoder is imported
+lazily on first call (same pattern as before) and its actual measured
+footprint is far smaller — see the memory measurement in the accompanying
+report.
 
-ArcFace weights (~400 MB) are loaded only when /ai/face/verify is first called.
-Face detection uses the lightweight OpenCV backend and never touches ArcFace.
+Face detection uses dlib's HOG detector (primary, with per-detection
+confidence scores), falling back to OpenCV's Haar cascade only if HOG finds
+nothing — mirroring the previous primary/fallback structure.
 """
 
 from __future__ import annotations
@@ -29,141 +35,199 @@ from app.preprocessing import load_raw_rgb
 
 router = APIRouter(dependencies=[Depends(verify_token)])
 
-# ── Lazy DeepFace loader — standard import deferred to first call ─────────────
+# ── Lazy face_recognition/dlib loader — import deferred to first call ────────
 
-_deepface_lock:   threading.Lock = threading.Lock()
-_deepface_module: Any            = None
-_arcface_ready:   bool           = False
-_DETECTOR_BACKEND                = "yunet"   # DNN-based; more robust than Haar for selfies
+_face_lock:        threading.Lock = threading.Lock()
+_face_recognition:  Any            = None
+_dlib_module:       Any            = None
+_dlib_detector:     Any            = None
+_face_model_ready:  bool           = False
 
-# ── ArcFace match via DeepFace.verify() ──────────────────────────────────────
-# DeepFace.verify() uses its own calibrated threshold (0.68 for ArcFace cosine)
-# validated on large face datasets.  We use its verified/rejected decision as
-# the gate and scale the score within the verified range using its own threshold,
-# so no manual constant tuning is needed.
+_MATCH_THRESHOLD = 0.6  # face_recognition's own documented standard threshold —
+# unlike the old ArcFace override (0.88, empirically tuned on real ID photos),
+# this hasn't been retuned against real Aadhaar/PAN images, since none were
+# available to test against. Revisit if real-world false-rejects show up.
 
-def _run_arcface_match(selfie_img: np.ndarray, doc_img: np.ndarray) -> tuple[float, float]:
+
+def _get_face_recognition() -> Any:
+    """Return the face_recognition module, importing on the very first call."""
+    global _face_recognition
+    if _face_recognition is None:
+        with _face_lock:
+            if _face_recognition is None:
+                print("[FACE] Importing face_recognition (first call)...")
+                import face_recognition as _fr
+                _face_recognition = _fr
+                print("[FACE] face_recognition imported.")
+    return _face_recognition
+
+
+def _get_dlib_detector() -> Any:
+    """Return dlib's HOG frontal-face detector, importing on first call."""
+    global _dlib_module, _dlib_detector
+    if _dlib_detector is None:
+        with _face_lock:
+            if _dlib_detector is None:
+                import dlib as _dlib
+                _dlib_module = _dlib
+                _dlib_detector = _dlib.get_frontal_face_detector()
+    return _dlib_detector
+
+
+def _ensure_face_model_ready() -> None:
     """
-    Run DeepFace.verify() for ArcFace match between selfie and document face.
+    Trigger the face_recognition/dlib import on first call. No-op after that.
+
+    NB: face_recognition loads its dlib shape-predictor and ResNet encoder
+    weights as module-level globals the moment it's imported — there's no
+    separate "build model" step the way DeepFace had. A synthetic-image
+    warmup encoding was tried here and removed: running dlib's landmark
+    predictor on a degenerate all-black image with a forced bounding box
+    reproducibly hung indefinitely (confirmed via direct testing — CPU usage
+    stayed flat for 20+s, not just slow). Real face crops never hit this
+    path, so the import alone is sufficient warmup.
+    """
+    global _face_model_ready
+    if _face_model_ready:
+        return
+    # _get_face_recognition() has its own internal lock around the actual
+    # import — do not wrap this call in _face_lock too, since that lock is
+    # non-reentrant and a thread already holding it would deadlock itself.
+    print("[FACE] Loading dlib face-encoding model (first call)...")
+    _get_face_recognition()
+    _face_model_ready = True
+    print("[FACE] face_recognition ready.")
+
+
+# ── Face matching via face_recognition.face_distance() ───────────────────────
+# face_recognition's distance is Euclidean over 128-D embeddings (not cosine,
+# unlike the old ArcFace path) — lower distance = more similar, same direction
+# as before. Reuses the same (1 - distance) * 100 scaling so downstream score
+# interpretation is unchanged.
+
+def _encode_whole_image(rgb_or_bgr: np.ndarray, already_rgb: bool) -> Optional[np.ndarray]:
+    """
+    Encode an already-cropped face image directly, without re-running
+    detection — the input is treated as the entire face region.
+    """
+    fr  = _get_face_recognition()
+    rgb = rgb_or_bgr if already_rgb else cv2.cvtColor(rgb_or_bgr, cv2.COLOR_BGR2RGB)
+    h, w = rgb.shape[:2]
+    if h == 0 or w == 0:
+        return None
+    encodings = fr.face_encodings(rgb, known_face_locations=[(0, w, h, 0)])
+    return encodings[0] if encodings else None
+
+
+def _run_face_match(selfie_img: np.ndarray, doc_img: np.ndarray) -> tuple[float, float]:
+    """
+    Match two already-cropped, RGB, 0-255 uint8 face images (as produced by
+    _extract_faces' "face" crop, scaled back to 0-255).
     Returns (distance, pct) where:
-      distance — raw cosine distance from DeepFace (stored for audit trail)
-      pct      — 0.0 if different person; 40–95 if verified
-    threshold=0.85 overrides DeepFace's default (0.593) which is too strict for
-    Indian ID documents where the photo can be 5–10 years old and JPEG-compressed.
-    Real-world Aadhaar/PAN cosine distances frequently reach 0.75–0.82 for the
-    same person due to photo age, compression artefacts, and print-scan degradation.
+      distance — raw Euclidean distance from face_recognition (audit trail)
+      pct      — 0.0 if different person; 40-95 if verified
     """
-    result    = _get_deepface().verify(
-        img1_path=selfie_img,
-        img2_path=doc_img,
-        model_name=settings.face_model,
-        distance_metric="cosine",
-        enforce_detection=False,
-        threshold=0.88,
-    )
-    distance  = float(result["distance"])
-    verified  = bool(result["verified"])
-    threshold = float(result["threshold"])
+    selfie_enc = _encode_whole_image(selfie_img, already_rgb=True)
+    doc_enc    = _encode_whole_image(doc_img,    already_rgb=True)
+    if selfie_enc is None or doc_enc is None:
+        raise RuntimeError("face_encoding_failed")
 
-    print(f"[ARCFACE] cosine_dist={distance:.4f} verified={verified} threshold={threshold}")
+    fr       = _get_face_recognition()
+    distance = float(fr.face_distance([doc_enc], selfie_enc)[0])
+    verified = distance <= _MATCH_THRESHOLD
+
+    print(f"[FACE MATCH] dlib_distance={distance:.4f} verified={verified} threshold={_MATCH_THRESHOLD}")
 
     # Continuous proportional score — no binary pass/fail.
-    # Lower distance = more similar = higher score; higher distance = lower score.
-    # Maps distance [0 → 1] linearly to score [95 → 0]. No artificial floor.
     pct = round(max(0.0, min(95.0, (1.0 - distance) * 100.0)), 2)
     label = "VERIFIED" if verified else "LOW MATCH"
-    print(f"[ARCFACE] {label} — pct={pct}% (dist={distance:.4f})")
+    print(f"[FACE MATCH] {label} — pct={pct}% (dist={distance:.4f})")
     return distance, pct
 
 
-def _get_deepface() -> Any:
-    """Return the DeepFace class, importing on the very first call."""
-    global _deepface_module
-    if _deepface_module is None:
-        with _deepface_lock:
-            if _deepface_module is None:
-                print("[FACE] Importing DeepFace (first call — may take 30-60 s)...")
-                from deepface import DeepFace
-                _deepface_module = DeepFace
-                print("[FACE] DeepFace imported.")
-    return _deepface_module
-
-
-def _ensure_arcface_ready() -> None:
+def _get_face_embedding(bgr: np.ndarray) -> Optional[np.ndarray]:
     """
-    Build ArcFace weights and warm up the primary face detector on first call.
-    No-op after that.
+    Detect the best face in a full (uncropped) image and return its 128-D
+    encoding directly — equivalent to the old DeepFace.represent() helper
+    used by the verify-profile path.
     """
-    global _arcface_ready
-    if _arcface_ready:
-        return
-    with _deepface_lock:
-        if _arcface_ready:
-            return
-        print(f"[FACE] Building {settings.face_model} model (first run downloads ~400 MB)...")
-        _get_deepface().build_model(settings.face_model)
-        # Warm up primary detector — triggers model download before first user request.
-        try:
-            _get_deepface().extract_faces(
-                np.zeros((100, 100, 3), dtype=np.uint8),
-                detector_backend=_DETECTOR_BACKEND,
-                enforce_detection=False,
-            )
-            print(f"[FACE] {_DETECTOR_BACKEND} detector warmed up.")
-        except Exception as exc:
-            print(f"[FACE] {_DETECTOR_BACKEND} warmup failed (fallback={_DETECTOR_FALLBACK}): {exc}")
-        # Run a full represent() call to warm up the inference pipeline — avoids
-        # Keras/TF session cold-start on the very first real verification request.
-        try:
-            _get_deepface().represent(
-                img_path=np.zeros((112, 112, 3), dtype=np.uint8),
-                model_name=settings.face_model,
-                detector_backend="skip",   # already cropped to 112×112
-                enforce_detection=False,
-            )
-            print(f"[FACE] ArcFace inference pipeline warmed up.")
-        except Exception as exc:
-            print(f"[FACE] ArcFace represent warmup failed: {exc}")
-        _arcface_ready = True
-        print(f"[FACE] {settings.face_model} ready.")
+    faces = _extract_faces(bgr)
+    if not faces:
+        return None
+    best = max(faces, key=lambda f: f["confidence"])
+    fa   = best["facial_area"]
+    rgb  = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    top, right, bottom, left = fa["y"], fa["x"] + fa["w"], fa["y"] + fa["h"], fa["x"]
+    fr = _get_face_recognition()
+    encodings = fr.face_encodings(rgb, known_face_locations=[(top, right, bottom, left)])
+    return encodings[0] if encodings else None
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 _MIN_FACE_PX      = 20
 _MIN_FACE_CONF    = 0.1
-_DETECTOR_FALLBACK = "opencv"   # Haar cascade — universal fallback
 
 
 def _extract_faces(bgr: np.ndarray) -> list[dict]:
     """
-    Detect faces with the primary DNN backend, falling back to Haar cascade
-    only if the primary backend throws (model not available, etc.).
-    An empty result from the primary backend is treated as a genuine miss —
-    we do NOT retry with the fallback, since Haar is less accurate.
+    Detect faces with dlib's HOG detector (primary), falling back to OpenCV
+    Haar cascade only if HOG finds nothing. Returns dicts shaped like the
+    previous DeepFace.extract_faces() output — {"facial_area": {x,y,w,h},
+    "confidence": float, "face": RGB float[0..1] crop} — so downstream code
+    written against that shape needs no changes.
     """
-    for backend in (_DETECTOR_BACKEND, _DETECTOR_FALLBACK):
+    h_img, w_img = bgr.shape[:2]
+    boxes: list[tuple[int, int, int, int, float]] = []  # x, y, w, h, conf
+
+    try:
+        rgb      = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        detector = _get_dlib_detector()
+        dets, scores, _ = detector.run(rgb, 1, -1)
+        for d, score in zip(dets, scores):
+            x, y = max(0, d.left()), max(0, d.top())
+            w, h = max(0, d.right() - d.left()), max(0, d.bottom() - d.top())
+            if w > 0 and h > 0:
+                boxes.append((x, y, w, h, max(0.0, min(1.0, float(score)))))
+        print(f"[FACE DETECT] backend=dlib_hog -> {len(boxes)} face(s)")
+    except Exception as exc:
+        print(f"[FACE EXTRACT ERROR] dlib_hog: {exc}")
+
+    if not boxes:
         try:
-            faces = _get_deepface().extract_faces(
-                img_path=bgr,
-                detector_backend=backend,
-                enforce_detection=False,
-                align=True,
+            gray    = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+            cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
             )
-            filtered = [
-                f for f in faces
-                if f.get("confidence", 0) > _MIN_FACE_CONF
-                and f["facial_area"]["w"] >= _MIN_FACE_PX
-                and f["facial_area"]["h"] >= _MIN_FACE_PX
-            ]
-            print(f"[FACE DETECT] backend={backend} → {len(filtered)} face(s)")
-            return filtered          # success (even if 0) — stop trying
+            rects = cascade.detectMultiScale(
+                gray, scaleFactor=1.1, minNeighbors=4, minSize=(20, 20),
+            )
+            for (x, y, w, h) in rects:
+                boxes.append((int(x), int(y), int(w), int(h), 0.5))
+            print(f"[FACE DETECT] backend=haar_fallback -> {len(boxes)} face(s)")
         except Exception as exc:
-            print(f"[FACE EXTRACT ERROR] backend={backend}: {exc}")
-            if backend == _DETECTOR_FALLBACK:
-                break                # exhausted all backends
-            # else: loop continues to fallback
-    return []
+            print(f"[FACE EXTRACT ERROR] haar_fallback: {exc}")
+
+    faces: list[dict] = []
+    for x, y, w, h, conf in boxes:
+        x2, y2 = min(w_img, x + w), min(h_img, y + h)
+        crop_bgr = bgr[y:y2, x:x2]
+        if crop_bgr.size == 0:
+            continue
+        crop_rgb_norm = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB).astype(np.float64) / 255.0
+        faces.append({
+            "facial_area": {"x": x, "y": y, "w": w, "h": h},
+            "confidence":  conf,
+            "face":        crop_rgb_norm,
+        })
+
+    filtered = [
+        f for f in faces
+        if f["confidence"] > _MIN_FACE_CONF
+        and f["facial_area"]["w"] >= _MIN_FACE_PX
+        and f["facial_area"]["h"] >= _MIN_FACE_PX
+    ]
+    return filtered
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -264,14 +328,14 @@ def _run_verify(selfie_bgr: np.ndarray, doc_bgr: np.ndarray) -> FaceVerifyRespon
     print(f"[FACE VERIFY] selfie={selfie_bgr.shape} doc={doc_bgr.shape}")
 
     # Load model weights on first verify call (no-op afterwards)
-    _ensure_arcface_ready()
+    _ensure_face_model_ready()
 
     selfie_faces = _extract_faces(selfie_bgr)
     doc_faces    = _extract_faces(doc_bgr)
     print(f"[FACE DETECT] selfie={len(selfie_faces)} doc={len(doc_faces)}")
 
     _no_result = dict(distance=1.0, threshold=0.0, match=False,
-                      model=settings.face_model, face_match=0.0)
+                      model="dlib_resnet", face_match=0.0)
 
     if len(selfie_faces) == 0:
         return FaceVerifyResponse(**_no_result, flag="no_face_in_selfie")
@@ -287,34 +351,22 @@ def _run_verify(selfie_bgr: np.ndarray, doc_bgr: np.ndarray) -> FaceVerifyRespon
     print(f"[FACE CROPS] selfie={selfie_face.shape} doc={doc_face.shape}")
 
     try:
-        result = _get_deepface().verify(
-            img1_path=selfie_face,
-            img2_path=doc_face,
-            model_name=settings.face_model,
-            detector_backend="skip",
-            enforce_detection=False,
-            distance_metric="cosine",
-        )
+        distance, pct = _run_face_match(selfie_face, doc_face)
     except Exception as exc:
-        print(f"[DEEPFACE ERROR] {exc}")
+        print(f"[FACE MATCH ERROR] {exc}")
         raise HTTPException(status_code=500, detail={"error": str(exc), "code": "FACE_VERIFY_FAILED"})
 
-    distance   = float(result["distance"])
-    threshold  = float(result["threshold"])
-    # No artificial floor — a non-matching face must score low (0.0 is valid).
-    # Formula: normalise distance against threshold; clamp to [0, 1].
-    ratio      = distance / max(threshold, 1e-9)
-    face_match = round(max(0.0, min(1.0, 1.0 - ratio ** 0.5)), 4)
-    print(f"[face-match] distance:{distance:.4f} threshold:{threshold:.4f} ratio:{ratio:.4f} score:{face_match:.4f}")
+    verified   = distance <= _MATCH_THRESHOLD
+    face_match = round(pct / 100.0, 4)
     print(
-        f"[FACE RESULT] distance={distance:.4f} threshold={threshold:.4f} "
-        f"match={result['verified']} face_match={face_match}"
+        f"[FACE RESULT] distance={distance:.4f} threshold={_MATCH_THRESHOLD} "
+        f"match={verified} face_match={face_match}"
     )
     return FaceVerifyResponse(
         distance=round(distance, 4),
-        threshold=round(threshold, 4),
-        match=bool(result["verified"]),
-        model=settings.face_model,
+        threshold=_MATCH_THRESHOLD,
+        match=verified,
+        model="dlib_resnet",
         face_match=face_match,
         flag=None,
     )
@@ -324,14 +376,14 @@ def _run_verify_stub(selfie_bgr: np.ndarray, doc_bgr: np.ndarray) -> FaceVerifyR
     print(f"[FACE VERIFY STUB] selfie={selfie_bgr.shape} doc={doc_bgr.shape}")
     selfie_faces = _extract_faces(selfie_bgr)
     doc_faces    = _extract_faces(doc_bgr)
-    
-    # Fallback to the full image if OpenCV Haar cascades fail to find a face,
+
+    # Fallback to the full image if face detection fails to find a face,
     # ensuring we always perform a similarity check rather than returning 0.
     if len(selfie_faces) > 0:
         selfie_face = (selfie_faces[0]["face"] * 255).astype(np.uint8)
     else:
         selfie_face = selfie_bgr
-        
+
     if len(doc_faces) > 0:
         doc_face = (doc_faces[0]["face"] * 255).astype(np.uint8)
     else:
@@ -340,26 +392,26 @@ def _run_verify_stub(selfie_bgr: np.ndarray, doc_bgr: np.ndarray) -> FaceVerifyR
     # Resize to the same dimensions for structural comparison
     doc_face = cv2.resize(doc_face, (100, 100))
     selfie_face = cv2.resize(selfie_face, (100, 100))
-    
+
     # Convert to grayscale for facial feature structural similarity
     gray_selfie = cv2.cvtColor(selfie_face, cv2.COLOR_BGR2GRAY)
     gray_doc = cv2.cvtColor(doc_face, cv2.COLOR_BGR2GRAY)
-    
+
     # Use Template Matching (Cross-Correlation) which gives a percentage-like score
     # representing the structural similarity of facial features
     result = cv2.matchTemplate(gray_selfie, gray_doc, cv2.TM_CCOEFF_NORMED)
     sim = result[0][0]
-    
+
     # Normalize the score smoothly between 0 and 1
     match_score = max(0.0, min(1.0, float(sim)))
-    
+
     # Return the exact percentage similarity calculated from the facial features
     return FaceVerifyResponse(
-        distance=1.0 - match_score, 
-        threshold=0.4, 
+        distance=1.0 - match_score,
+        threshold=0.4,
         match=match_score > 0.4,
-        model="stub_structural", 
-        face_match=round(match_score, 4), 
+        model="stub_structural",
+        face_match=round(match_score, 4),
         flag=None,
     )
 
@@ -393,13 +445,13 @@ async def verify_face_vs_qr_photo(req: FaceVerifyB64Request) -> FaceVerifyRespon
     # qr_photo_bgr = "selfie" position; card_bgr = "doc" position
     # asyncio.shield keeps the thread-pool task alive even if the HTTP client
     # disconnects or the server is shut down mid-inference.
-    
+
     if settings.skip_face_model:
         print("[FACE VERIFY B64] SKIP_FACE_MODEL=true — using fast OpenCV histogram match")
         task = loop.run_in_executor(None, _run_verify_stub, qr_photo_bgr, card_bgr)
     else:
         task = loop.run_in_executor(None, _run_verify, qr_photo_bgr, card_bgr)
-        
+
     return await asyncio.shield(task)
 
 
@@ -423,8 +475,8 @@ async def verify_face(req: FaceVerifyRequest) -> FaceVerifyResponse:
     loop = asyncio.get_running_loop()
     # asyncio.shield keeps the thread-pool task alive even if the HTTP client
     # disconnects or the server is shut down mid-inference, preventing the
-    # CancelledError that would cause the face_cap_35 guardrail to fire.
-    
+    # face_cap_35 guardrail from firing.
+
     if settings.skip_face_model:
         print("[FACE VERIFY] SKIP_FACE_MODEL=true — using fast OpenCV histogram match")
         task = loop.run_in_executor(None, _run_verify_stub, selfie_bgr, doc_bgr)
@@ -435,9 +487,9 @@ async def verify_face(req: FaceVerifyRequest) -> FaceVerifyResponse:
 
 
 # ── /ai/face/verify-profile ───────────────────────────────────────────────────
-# ArcFace cosine-similarity scoring for profile (selfie) vs all ID documents.
-# Flow: extract ArcFace embedding from selfie, then from each document image,
-# compute cosine similarity, map to discrete band, return average percentage.
+# dlib-based cosine-similarity-equivalent scoring for profile (selfie) vs all
+# ID documents. Flow: extract a 128-D encoding from the selfie, then from each
+# document image, compute distance, map to a discrete band, return average.
 
 class DocFaceScore(BaseModel):
     doc_url:    str
@@ -456,37 +508,6 @@ class FaceVerifyProfileResponse(BaseModel):
     profile_verification_pct: float
     flag:                     Optional[str] = None
     reason:                   Optional[str] = None
-
-
-def _get_arcface_embedding(bgr: np.ndarray) -> Optional[np.ndarray]:
-    """
-    Detect face, align, and extract ArcFace 512-D embedding via DeepFace.
-    Tries the primary detector first; falls back to Haar on exception OR on
-    empty result (selfie images sometimes need the Haar fallback when the
-    DNN detector is slightly too strict about minimal face size).
-    Returns None only when both backends find no face.
-    """
-    seen = set()
-    for backend in (_DETECTOR_BACKEND, _DETECTOR_FALLBACK):
-        if backend in seen:
-            break
-        seen.add(backend)
-        try:
-            reps = _get_deepface().represent(
-                img_path=bgr,
-                model_name=settings.face_model,
-                detector_backend=backend,
-                enforce_detection=False,
-                align=True,
-            )
-            if reps:
-                emb = np.array(reps[0]["embedding"], dtype=np.float32)
-                print(f"[ARCFACE EMBED] backend={backend} → OK")
-                return emb
-            print(f"[ARCFACE EMBED] backend={backend} → no face found, trying fallback")
-        except Exception as exc:
-            print(f"[ARCFACE EMBED ERROR] backend={backend}: {exc}")
-    return None
 
 
 def _crop_face_from_document(bgr: np.ndarray, label: str) -> np.ndarray:
@@ -515,16 +536,16 @@ def _crop_face_from_document(bgr: np.ndarray, label: str) -> np.ndarray:
     x2 = min(bgr.shape[1], x + w + pad)
     y2 = min(bgr.shape[0], y + h + pad)
     cropped = bgr[y1:y2, x1:x2]
-    print(f"[FACE CROP] {label} cropped {w}x{h}px at ({x},{y}) → region {cropped.shape[1]}x{cropped.shape[0]}")
+    print(f"[FACE CROP] {label} cropped {w}x{h}px at ({x},{y}) -> region {cropped.shape[1]}x{cropped.shape[0]}")
     print(f"[FACE CROP] All detected faces: {[(int(fx),int(fy),int(fw),int(fh)) for fx,fy,fw,fh in faces]}")
     return cropped
 
 
 def _enhance_document_face(img_array: np.ndarray, label: str) -> np.ndarray:
     """
-    Upscale and enhance compressed ID card face photos before ArcFace embedding.
-    Aadhaar/PAN portrait thumbnails are typically 67x67px JPEG — too small and
-    artifact-laden for reliable 512-D embedding extraction.
+    Upscale and enhance compressed ID card face photos before embedding
+    extraction. Aadhaar/PAN portrait thumbnails are typically 67x67px JPEG —
+    too small and artifact-laden for a reliable embedding.
     """
     h, w = img_array.shape[:2]
     print(f"[ENHANCE] {label} original size: {w}x{h}px")
@@ -569,19 +590,15 @@ def _check_face_detectable(
     is_document:    bool  = False,
 ) -> tuple[bool, float, np.ndarray]:
     """
-    Returns (is_detectable, best_confidence, img_for_arcface).
-    For documents, crops the face region first so YuNet sees a portrait-sized
-    image rather than a full card scan.  The cropped array is returned as the
-    third element so the caller can pass it directly to _get_arcface_embedding.
+    Returns (is_detectable, best_confidence, img_for_embedding).
+    For documents, crops the face region first so the detector sees a
+    portrait-sized image rather than a full card scan. The cropped array is
+    returned as the third element so the caller can pass it directly to
+    _get_face_embedding.
     """
     img_to_use = _crop_face_from_document(bgr, label) if is_document else bgr
     try:
-        faces = _get_deepface().extract_faces(
-            img_path=img_to_use,
-            detector_backend=_DETECTOR_BACKEND,
-            enforce_detection=False,
-            align=True,
-        )
+        faces = _extract_faces(img_to_use)
         if not faces:
             print(f"[FACE QUALITY] No face detected in {label}")
             return False, 0.0, img_to_use
@@ -613,16 +630,16 @@ def _run_verify_profile(
     doc_items:  list,          # list of (doc_url: str, doc_bgr: np.ndarray)
 ) -> FaceVerifyProfileResponse:
     """
-    Compute per-document ArcFace cosine similarity and return average score.
+    Compute per-document face-distance and return average score.
     Runs synchronously in a thread-pool executor.
     """
     import time as _time
     _t0 = _time.monotonic()
 
     try:
-        _ensure_arcface_ready()
+        _ensure_face_model_ready()
     except Exception as exc:
-        print(f"[FACE PROFILE] ArcFace model unavailable: {exc}")
+        print(f"[FACE PROFILE] Face model unavailable: {exc}")
         return FaceVerifyProfileResponse(
             scores=[], average_score=0.0,
             profile_verification_pct=0.0, flag="face_verification_unavailable",
@@ -672,14 +689,25 @@ def _run_verify_profile(
             reason=reason,
         )
 
-    print(f"[FACE PROFILE] {detectable_count}/{total_docs} docs detectable — proceeding with ArcFace")
+    print(f"[FACE PROFILE] {detectable_count}/{total_docs} docs detectable — proceeding with face match")
     doc_scores: list[DocFaceScore] = []
+    selfie_emb = _get_face_embedding(selfie_img)
     for doc_url, doc_img in detectable_docs:
         doc_img_enhanced = _enhance_document_face(doc_img, "document")
         try:
-            distance, score = _run_arcface_match(selfie_img, doc_img_enhanced)
+            if selfie_emb is None:
+                raise RuntimeError("selfie_embedding_failed")
+            doc_emb = _get_face_embedding(doc_img_enhanced)
+            if doc_emb is None:
+                raise RuntimeError("document_embedding_failed")
+            fr = _get_face_recognition()
+            distance = float(fr.face_distance([doc_emb], selfie_emb)[0])
+            score    = round(max(0.0, min(95.0, (1.0 - distance) * 100.0)), 2)
+            verified = distance <= _MATCH_THRESHOLD
+            print(f"[FACE MATCH] cosine_dist={distance:.4f} verified={verified} threshold={_MATCH_THRESHOLD}")
+            print(f"[FACE MATCH] {'VERIFIED' if verified else 'LOW MATCH'} — pct={score}% (dist={distance:.4f})")
         except Exception as exc:
-            print(f"[FACE PROFILE] ArcFace match error for {doc_url[:60]}: {type(exc).__name__}: {exc}")
+            print(f"[FACE PROFILE] Face match error for {doc_url[:60]}: {type(exc).__name__}: {exc}")
             doc_scores.append(DocFaceScore(doc_url=doc_url, cosine_sim=0.0, score=0))
             continue
         print(f"[FACE SCORE] pct={score}%  doc={doc_url[:60]}")
@@ -724,7 +752,7 @@ def _run_verify_profile_stub(
 async def verify_face_profile(req: FaceVerifyProfileRequest) -> FaceVerifyProfileResponse:
     """
     POST /ai/face/verify-profile
-    Selfie vs all uploaded ID documents — ArcFace cosine similarity.
+    Selfie vs all uploaded ID documents — dlib face-distance scoring.
     Returns per-document scores and the averaged profile verification percentage.
     """
     print(f"[ENDPOINT HIT] /ai/face/verify-profile  selfie={req.selfie_url[:60]}  docs={len(req.doc_urls)}")
@@ -732,10 +760,9 @@ async def verify_face_profile(req: FaceVerifyProfileRequest) -> FaceVerifyProfil
     if not req.doc_urls:
         raise HTTPException(status_code=400, detail={"error": "doc_urls must not be empty"})
 
-    # ArcFace loads lazily on first use inside _run_verify_profile (via
-    # _ensure_arcface_ready), which already returns a graceful
-    # "face_verification_unavailable" flag if loading fails — no separate
-    # pre-warm wait needed here.
+    # Model loads lazily on first use inside _run_verify_profile (via
+    # _ensure_face_model_ready), which already returns a graceful
+    # "face_verification_unavailable" flag if loading fails.
 
     try:
         images = await asyncio.gather(

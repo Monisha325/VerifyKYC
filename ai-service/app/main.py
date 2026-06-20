@@ -24,9 +24,9 @@ from fastapi.exceptions import RequestValidationError
 
 from app.routers import quality, ocr, classify, tampering, face, qr_exif, aadhaar_quality, aadhaar_qr, pan_qr, liveness
 
-# Heavy models (EasyOCR, DeepFace/ArcFace) are loaded lazily via importlib
-# on the first request that needs them.  This keeps startup memory well under
-# 512 MB so Railway's health check passes before any model touches the heap.
+# Heavy models (EasyOCR, dlib's face-encoding model) are loaded lazily via
+# importlib on the first request that needs them.  This keeps startup memory
+# well under 512 MB so the health check passes before any model touches the heap.
 
 app = FastAPI(
     title="VeriKYC AI Service",
@@ -65,9 +65,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 # ── Startup ────────────────────────────────────────────────────────────────────
-# No heavy model loading here. EasyOCR (app/routers/ocr.py) and DeepFace/ArcFace
-# (app/routers/face.py) are loaded lazily — only on the first request that
-# actually needs them — so the app finishes startup and /health responds
+# No heavy model loading here. EasyOCR (app/routers/ocr.py) and dlib's
+# face-encoding model (app/routers/face.py) are loaded lazily — only on the
+# first request that actually needs them — so the app finishes startup and
+# /health responds
 # immediately, regardless of memory/time it'd take to load those models.
 
 @app.on_event("startup")
