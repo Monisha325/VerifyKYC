@@ -12,8 +12,9 @@ const AI_TOKEN = process.env.INTERNAL_TOKEN || '';
 // which points to Render's platform layer rejecting the request before it
 // reaches the container. Retried with backoff; every other status still
 // fails immediately as before.
-const RETRY_429_ATTEMPTS  = 2;          // retries after the first attempt (3 total)
-const RETRY_429_DELAYS_MS = [500, 1500]; // backoff before each retry
+const RETRY_429_ATTEMPTS  = 2;            // retries after the first attempt (3 total) — unchanged
+const RETRY_429_DELAYS_MS = [3000, 10000]; // backoff before each retry — widened from [500, 1500]
+                                            // in case the rate-limit window resets on a longer cycle
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));

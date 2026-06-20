@@ -115,6 +115,19 @@ const FRAUD_WEIGHTS: Record<string, number> = {
   multiple_faces:      10,
 };
 
+// ── AI-call spacing (Render platform-level 429 burst mitigation) ─────────────
+// Render appears to rate-limit by request burst pattern rather than a
+// documented fixed quota. These are a first attempt at spacing calls out —
+// named constants since the right values are unknown and will likely need
+// tuning after a real test. Does not change which calls happen or in what
+// order, only the timing between them.
+export const FIRST_AI_CALL_DELAY_MS = 2500; // before the very first AI call in a document's pipeline
+export const AI_CALL_SPACING_MS     = 1500; // between each subsequent AI call within that same pipeline
+
+export function _delayBeforeAiCall(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // ── Public entry point ────────────────────────────────────────────────────────
 
 export async function runDocumentPipeline(documentId: string): Promise<void> {
@@ -164,6 +177,7 @@ export async function runDocumentPipeline(documentId: string): Promise<void> {
   // ── Stage 1: Image Quality ────────────────────────────────────────────────
   let quality: QualityResult;
   try {
+    await _delayBeforeAiCall(FIRST_AI_CALL_DELAY_MS); // first AI call for this document
     quality = await _withStageTimeout(
       checkQuality(doc.cloudinaryUrl, doc.kind), 'quality', documentId,
     );
@@ -199,6 +213,7 @@ export async function runDocumentPipeline(documentId: string): Promise<void> {
   // ── Stage 2: OCR ──────────────────────────────────────────────────────────
   let ocrResult: OcrResult | null = null;
   try {
+    await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows Stage 1's quality check
     ocrResult = await _withStageTimeout(runOcr(doc.cloudinaryUrl), 'ocr', documentId);
     signals.ocr = { segmentCount: ocrResult.segments.length,
                     avgConfidence: ocrResult.avg_confidence,
@@ -237,6 +252,7 @@ export async function runDocumentPipeline(documentId: string): Promise<void> {
   let detectedKind: string = 'UNKNOWN';
   try {
     if (ocrText) {
+      await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows Stage 2's OCR call
       const classify = await _withStageTimeout(classifyDocument(ocrText), 'classify', documentId);
       detectedKind   = classify.doc_type;
       signals.classify = { detected: detectedKind, confidence: classify.confidence,
@@ -310,6 +326,11 @@ export async function runDocumentPipeline(documentId: string): Promise<void> {
   }
 
   // ── Stages 4b + 6: fired in parallel — both are independent AI network calls ─
+  // NB: this is the one place in the pipeline where two AI calls genuinely run
+  // concurrently (not sequential-with-no-gap). Left as Promise.allSettled per
+  // instructions to change only timing, not call structure — only a delay
+  // before entering this stage was added, not between the two calls within it.
+  await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows Stage 3's classify call
   const [qrExifSettled, tamperingSettled] = await Promise.allSettled([
     _withStageTimeout(checkQrExif(doc.cloudinaryUrl),    'qr_exif',   documentId),
     _withStageTimeout(checkTampering(doc.cloudinaryUrl), 'tampering', documentId),
@@ -529,6 +550,7 @@ async function _runPanPipeline(
   // ── Stage A: QR Cryptographic Verification ────────────────────────────────
   let panQr: PanQrResult | null = null;
   try {
+    await _delayBeforeAiCall(FIRST_AI_CALL_DELAY_MS); // first AI call for this document
     panQr = await _withStageTimeout(verifyPanQr(cloudinaryUrl), 'qr_verify', documentId);
     signals.qr = {
       qr_found:          panQr.qr_found,
@@ -572,6 +594,7 @@ async function _runPanPipeline(
     // Hard-fail only when match is definitively poor (< 0.30) AND no extraction error.
     if (panQr.photo_present && panQr.photo_b64) {
       try {
+        await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows Stage A's QR verify call
         const faceResult = await _withStageTimeout(
           verifyFaceVsB64(cloudinaryUrl, panQr.photo_b64), 'face_verify', documentId,
         );
@@ -654,6 +677,7 @@ async function _persistPanAuthoritativePath(
   // by the ITD signature; pixel edits cannot alter the signed payload).
   let fraudScore = 0;
   try {
+    await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows Stage A/B's prior AI call
     const tampering = await _withStageTimeout(checkTampering(cloudinaryUrl), 'tampering', documentId)
       .catch(() => null);
     if (tampering) {
@@ -734,6 +758,7 @@ async function _runPanFallback(
   // ── C1: Lean quality gate ─────────────────────────────────────────────────
   let quality: QualityResult;
   try {
+    await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows Stage A/B's prior AI call
     quality = await _withStageTimeout(checkQuality(cloudinaryUrl, 'PAN'), 'quality', documentId);
     signals.quality = { blur: quality.blur_score, glare: quality.glare_ratio,
                         exposure: quality.exposure, resolution: quality.resolution,
@@ -767,6 +792,7 @@ async function _runPanFallback(
   // ── C2: OCR (non-fatal) ───────────────────────────────────────────────────
   let ocrResult: OcrResult | null = null;
   try {
+    await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows C1's quality check
     ocrResult = await _withStageTimeout(runOcr(cloudinaryUrl), 'ocr', documentId);
     signals.ocr = { segmentCount: ocrResult.segments.length,
                     avgConfidence: ocrResult.avg_confidence,
@@ -796,6 +822,7 @@ async function _runPanFallback(
   // C2: Classification — type mismatch only on confident wrong-type result
   try {
     if (ocrText) {
+      await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows C2's OCR call
       const classify = await _withStageTimeout(classifyDocument(ocrText), 'classify', documentId);
       signals.classify = { detected: classify.doc_type, confidence: classify.confidence };
       if (classify.doc_type !== 'UNKNOWN' && classify.doc_type !== 'PAN' &&
@@ -848,6 +875,7 @@ async function _runPanFallback(
   // ── C4: Hardened tampering thresholds ────────────────────────────────────
   let tamperingResult: TamperingResult | null = null;
   try {
+    await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows C2's classify call (or OCR if classify was skipped)
     tamperingResult = await _withStageTimeout(checkTampering(cloudinaryUrl), 'tampering', documentId);
     signals.tampering = { ela: tamperingResult.ela_score, copyMove: tamperingResult.copy_move_score,
                           verdict: tamperingResult.verdict, regions: tamperingResult.regions.length };
@@ -999,6 +1027,7 @@ async function _runAadhaarPipeline(
   // ── Stage A: QR Cryptographic Verification ────────────────────────────────
   let qrResult: AadhaarQrResult | null = null;
   try {
+    await _delayBeforeAiCall(FIRST_AI_CALL_DELAY_MS); // first AI call for this document
     qrResult = await _withStageTimeout(
       verifyAadhaarQr(cloudinaryUrl), 'qr_verify', documentId,
     );
@@ -1104,6 +1133,7 @@ async function _persistAadhaarCryptoPath(
   // Tampering: advisory-only on the crypto path (pixel edits don't affect signed QR data)
   let fraudScore = 0;
   try {
+    await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows the Stage A QR call above
     const tampering = await _withStageTimeout(checkTampering(cloudinaryUrl), 'tampering', documentId)
       .catch(() => null);
     if (tampering) {
@@ -1178,6 +1208,7 @@ async function _runAadhaarFallback(
   // blank, type6_back_only.  Blur/glare/exposure lower quality_score as penalties.
   let quality: QualityResult;
   try {
+    await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows Stage A's QR verify attempt
     quality = await _withStageTimeout(
       checkQuality(cloudinaryUrl, 'AADHAAR'), 'quality', documentId,
     );
@@ -1216,6 +1247,7 @@ async function _runAadhaarFallback(
   // ── B2: OCR ───────────────────────────────────────────────────────────────
   let ocrResult: OcrResult | null = null;
   try {
+    await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows B1's quality check
     ocrResult = await _withStageTimeout(runOcr(cloudinaryUrl), 'ocr', documentId);
     signals.ocr = { segmentCount: ocrResult.segments.length,
                     avgConfidence: ocrResult.avg_confidence,
@@ -1246,6 +1278,7 @@ async function _runAadhaarFallback(
   // ── B2: Classification — mismatch only on confident different-type result ─
   try {
     if (ocrText) {
+      await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows B2's OCR call
       const classify = await _withStageTimeout(classifyDocument(ocrText), 'classify', documentId);
       signals.classify = { detected: classify.doc_type, confidence: classify.confidence };
       if (classify.doc_type !== 'UNKNOWN' && classify.doc_type !== 'AADHAAR' &&
@@ -1387,6 +1420,7 @@ async function _runAadhaarFallback(
   // (EXIF is always stripped by these apps — the flag would always false-positive).
   let tamperingResult: TamperingResult | null = null;
   try {
+    await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows B2's classify call (or OCR if classify was skipped)
     tamperingResult = await _withStageTimeout(checkTampering(cloudinaryUrl), 'tampering', documentId);
     signals.tampering = { ela: tamperingResult.ela_score, copyMove: tamperingResult.copy_move_score,
                           verdict: tamperingResult.verdict, regions: tamperingResult.regions.length };
@@ -1508,6 +1542,7 @@ async function _runSelfiePipeline(
   // it does NOT hard-fail the selfie (face match in identity.correlation is authoritative).
   let selfieQuality: Awaited<ReturnType<typeof checkQuality>> | null = null;
   try {
+    await _delayBeforeAiCall(FIRST_AI_CALL_DELAY_MS); // first AI call for this document
     selfieQuality = await _withStageTimeout(
       checkQuality(cloudinaryUrl, 'SELFIE'),
       'quality',
@@ -1551,6 +1586,7 @@ async function _runSelfiePipeline(
   // doc_confidence and tanks the overall score without adding safety.
   let faceCount = 0;
   try {
+    await _delayBeforeAiCall(AI_CALL_SPACING_MS); // follows Stage 0's quality check
     const faceDetect = await _withStageTimeout(detectFace(cloudinaryUrl), 'face_detect', documentId);
     faceCount = faceDetect.count;
     signals.faceDetect = { count: faceDetect.count, error: faceDetect.error };

@@ -16,6 +16,7 @@ import * as fuzz                         from 'fuzzball';
 import { prisma, withRetry }             from '../../utils/prisma';
 import { audit }                         from '../../utils/audit';
 import { verifyFaceProfile }             from './ai.client';
+import { AI_CALL_SPACING_MS, _delayBeforeAiCall } from './pipeline';
 
 // ── Address abbreviation expansions ───────────────────────────────────────────
 
@@ -223,6 +224,10 @@ async function _runIdentityCorrelationCore(applicationId: string): Promise<Ident
         timestamp:  new Date().toISOString(),
       });
       try {
+        // Spaced out from the per-document pipelines' AI calls that preceded
+        // this — same Render-429-burst mitigation as pipeline.ts (see there
+        // for the named constants this shares).
+        await _delayBeforeAiCall(AI_CALL_SPACING_MS);
         const result = await verifyFaceProfile(selfie.cloudinaryUrl, docUrls);
         const faceCallMs = Date.now() - faceCallStart;
 
