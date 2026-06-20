@@ -7,20 +7,46 @@
 const AI_URL   = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 const AI_TOKEN = process.env.INTERNAL_TOKEN || '';
 
+// 429s from the AI service aren't application-level rate limiting (ai-service
+// has none) — they come back in ~20-30ms, too fast for any real processing,
+// which points to Render's platform layer rejecting the request before it
+// reaches the container. Retried with backoff; every other status still
+// fails immediately as before.
+const RETRY_429_ATTEMPTS  = 2;          // retries after the first attempt (3 total)
+const RETRY_429_DELAYS_MS = [500, 1500]; // backoff before each retry
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function aiPost<T>(path: string, body: unknown, timeoutMs = 30_000): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const resp = await fetch(`${AI_URL}${path}`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Internal-Token': AI_TOKEN },
-    body:    JSON.stringify(body),
-    signal:  controller.signal,
-  }).finally(() => clearTimeout(timer));
-  if (!resp.ok) {
+  for (let attempt = 0; attempt <= RETRY_429_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const resp = await fetch(`${AI_URL}${path}`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Internal-Token': AI_TOKEN },
+      body:    JSON.stringify(body),
+      signal:  controller.signal,
+    }).finally(() => clearTimeout(timer));
+
+    if (resp.ok) return resp.json() as Promise<T>;
+
+    if (resp.status === 429 && attempt < RETRY_429_ATTEMPTS) {
+      const retryAfterHeader = Number(resp.headers.get('retry-after'));
+      const delayMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+        ? retryAfterHeader * 1000
+        : RETRY_429_DELAYS_MS[attempt];
+      console.warn(`[ai.client] ${path} → 429, retrying in ${delayMs}ms (attempt ${attempt + 1}/${RETRY_429_ATTEMPTS})`);
+      await sleep(delayMs);
+      continue;
+    }
+
     const text = await resp.text().catch(() => '');
     throw new Error(`AI ${path} → ${resp.status}: ${text.slice(0, 200)}`);
   }
-  return resp.json() as Promise<T>;
+  // Unreachable — loop always returns or throws — but keeps TS's control-flow analysis happy.
+  throw new Error(`AI ${path} → exhausted 429 retries`);
 }
 
 // ── Response shapes ───────────────────────────────────────────────────────────
