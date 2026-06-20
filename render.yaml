@@ -58,3 +58,18 @@ services:
         sync: false
       - key: BREVO_FROM_EMAIL
         sync: false
+
+  # AI service (Python/FastAPI) — moved here from Railway (trial expired).
+  # Heavy ML libs (torch/tensorflow/deepface/easyocr) load lazily on first use
+  # per route, so the service starts well within the free tier's memory limit.
+  - type: web
+    name: verikyc-ai
+    runtime: docker
+    rootDir: ai-service
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      # Must match core's INTERNAL_TOKEN exactly (set in dashboard)
+      - key: INTERNAL_TOKEN
+        sync: false
