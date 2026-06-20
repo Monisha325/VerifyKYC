@@ -170,17 +170,24 @@ async function _runPipeline(applicationId: string): Promise<void> {
     `[orchestrator] processing application ${applicationId} — ${pending.length}/${app.documents.length} documents pending`,
   );
 
-  await Promise.all(
-    pending.map(async (doc) => {
-      try {
-        await runDocumentPipeline(doc.id);
-        console.log(`[orchestrator] document ${doc.id} complete`);
-      } catch (err: unknown) {
-        console.error(`[orchestrator] document ${doc.id} pipeline failed:`, err);
-        // Continue with remaining documents — one bad document must not block others
-      }
-    })
-  );
+  // Processed one at a time, not Promise.all — concurrent per-document pipelines
+  // each fire their own burst of AI-service calls, multiplying the request
+  // volume hitting Render's AI service at once. That volume (not per-call
+  // burst timing within a single document, which is already spaced — see
+  // pipeline.ts's AI_CALL_SPACING_MS) is the leading suspect for the sustained
+  // 429s observed in production, which persisted across 46+ seconds even with
+  // 14-15s gaps between calls. One bad document still must not block the rest,
+  // so each iteration keeps its own try/catch rather than letting one throw
+  // abort the loop.
+  for (const doc of pending) {
+    try {
+      await runDocumentPipeline(doc.id);
+      console.log(`[orchestrator] document ${doc.id} complete`);
+    } catch (err: unknown) {
+      console.error(`[orchestrator] document ${doc.id} pipeline failed:`, err);
+      // Continue with remaining documents — one bad document must not block others
+    }
+  }
 
   // ── Identity Correlation ──────────────────────────────────────────────────
   //   Cross-document name/DOB/gender/address comparison + face verification.
