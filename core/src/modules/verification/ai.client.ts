@@ -10,18 +10,22 @@ const AI_TOKEN = process.env.INTERNAL_TOKEN || '';
 // 429s from the AI service aren't application-level rate limiting (ai-service
 // has none) — they come back in ~20-30ms, too fast for any real processing,
 // which points to Render's platform layer rejecting the request before it
-// reaches the container. Retried with backoff; every other status still
-// fails immediately as before.
-const RETRY_429_ATTEMPTS  = 2;            // retries after the first attempt (3 total) — unchanged
-const RETRY_429_DELAYS_MS = [3000, 10000]; // backoff before each retry — widened from [500, 1500]
-                                            // in case the rate-limit window resets on a longer cycle
+// reaches the container.
+// 503s with an empty body are Render's proxy reporting "no response from
+// origin" — typically a container restart/cold-start blip, not a real app
+// error (confirmed: the service responds healthily again within seconds of
+// one of these). Both are treated as transient and retried with backoff;
+// every other status still fails immediately as before.
+const RETRYABLE_ATTEMPTS   = 2;            // retries after the first attempt (3 total)
+const RETRYABLE_DELAYS_MS  = [3000, 10000]; // backoff before each retry
+const RETRYABLE_STATUSES   = [429, 503];
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function aiPost<T>(path: string, body: unknown, timeoutMs = 30_000): Promise<T> {
-  for (let attempt = 0; attempt <= RETRY_429_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt <= RETRYABLE_ATTEMPTS; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const resp = await fetch(`${AI_URL}${path}`, {
@@ -33,12 +37,12 @@ async function aiPost<T>(path: string, body: unknown, timeoutMs = 30_000): Promi
 
     if (resp.ok) return resp.json() as Promise<T>;
 
-    if (resp.status === 429 && attempt < RETRY_429_ATTEMPTS) {
+    if (RETRYABLE_STATUSES.includes(resp.status) && attempt < RETRYABLE_ATTEMPTS) {
       const retryAfterHeader = Number(resp.headers.get('retry-after'));
       const delayMs = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
         ? retryAfterHeader * 1000
-        : RETRY_429_DELAYS_MS[attempt];
-      console.warn(`[ai.client] ${path} → 429, retrying in ${delayMs}ms (attempt ${attempt + 1}/${RETRY_429_ATTEMPTS})`);
+        : RETRYABLE_DELAYS_MS[attempt];
+      console.warn(`[ai.client] ${path} → ${resp.status}, retrying in ${delayMs}ms (attempt ${attempt + 1}/${RETRYABLE_ATTEMPTS})`);
       await sleep(delayMs);
       continue;
     }
@@ -47,7 +51,7 @@ async function aiPost<T>(path: string, body: unknown, timeoutMs = 30_000): Promi
     throw new Error(`AI ${path} → ${resp.status}: ${text.slice(0, 200)}`);
   }
   // Unreachable — loop always returns or throws — but keeps TS's control-flow analysis happy.
-  throw new Error(`AI ${path} → exhausted 429 retries`);
+  throw new Error(`AI ${path} → exhausted retries`);
 }
 
 // ── Response shapes ───────────────────────────────────────────────────────────
