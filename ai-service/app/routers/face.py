@@ -625,6 +625,18 @@ def _check_face_detectable(
         return False, 0.0, img_to_use
 
 
+class FaceModelUnavailableError(RuntimeError):
+    """
+    Raised when _ensure_face_model_ready() fails to load the model.
+    Distinct from a genuine quality-gate failure (bad selfie / undetectable
+    document face): this is an infrastructure problem, not a judgment about
+    the submitted photo, so the endpoint converts it to a 503 — letting
+    core's existing retry-on-503 logic catch what's almost certainly a
+    transient cold-start/restart blip, rather than masquerading as a
+    "verification unavailable" result that core has no reason to retry.
+    """
+
+
 def _run_verify_profile(
     selfie_bgr: np.ndarray,
     doc_items:  list,          # list of (doc_url: str, doc_bgr: np.ndarray)
@@ -640,10 +652,7 @@ def _run_verify_profile(
         _ensure_face_model_ready()
     except Exception as exc:
         print(f"[FACE PROFILE] Face model unavailable: {exc}")
-        return FaceVerifyProfileResponse(
-            scores=[], average_score=0.0,
-            profile_verification_pct=0.0, flag="face_verification_unavailable",
-        )
+        raise FaceModelUnavailableError(str(exc)) from exc
 
     print(f"[FACE PROFILE START] model_ready=True docs={len(doc_items)}")
 
@@ -761,8 +770,9 @@ async def verify_face_profile(req: FaceVerifyProfileRequest) -> FaceVerifyProfil
         raise HTTPException(status_code=400, detail={"error": "doc_urls must not be empty"})
 
     # Model loads lazily on first use inside _run_verify_profile (via
-    # _ensure_face_model_ready), which already returns a graceful
-    # "face_verification_unavailable" flag if loading fails.
+    # _ensure_face_model_ready). If that fails, _run_verify_profile raises
+    # FaceModelUnavailableError, caught below and converted to a 503 — see
+    # that exception's docstring for why this is no longer a 200+flag result.
 
     try:
         images = await asyncio.gather(
@@ -791,6 +801,9 @@ async def verify_face_profile(req: FaceVerifyProfileRequest) -> FaceVerifyProfil
     except asyncio.CancelledError:
         print("[FACE PROFILE CANCELLED] Server shutting down mid-request")
         raise
+    except FaceModelUnavailableError as exc:
+        print(f"[FACE PROFILE ERROR] model unavailable, returning 503 for retry: {exc}")
+        raise HTTPException(status_code=503, detail={"error": "FACE_MODEL_UNAVAILABLE"})
     except Exception as exc:
         print(f"[FACE PROFILE ERROR] {type(exc).__name__}: {exc}")
         raise
