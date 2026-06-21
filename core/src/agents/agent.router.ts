@@ -38,12 +38,31 @@ router.post(
   requireAuth,
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const { message = '', ...rest } = req.body as { message?: string } & OrchestratorArgs;
+      // The wire format is { message } OR { tool, args: {...} } — that nested
+      // `args` must be unwrapped here. Spreading req.body directly (as this
+      // used to) left a literal `args` *property* sitting alongside the
+      // flattened fields instead of merging its contents, so tool handlers
+      // reading e.g. applicationId off the top level got undefined. Silently
+      // masked for get_application_status/get_application (both fall back
+      // to the user's most recent application when applicationId is
+      // missing) — not masked for claim_application/get_evidence_bundle,
+      // which have no such fallback and crashed instead.
+      const { message = '', tool, args: bodyArgs } = req.body as {
+        message?: string;
+        tool?:    string;
+        args?:    Record<string, unknown>;
+      };
 
       const args: OrchestratorArgs = {
-        ...rest,
+        ...(bodyArgs ?? {}),
+        tool,
         userId: req.user?.sub,
         role:   req.user?.role,
+        // Same pattern as userId/role above, under the names members-agent
+        // tools expect — lets claim_application/submit_decision work from a
+        // one-click button without the client needing to know its own id.
+        reviewerId:   req.user?.sub,
+        reviewerRole: req.user?.role,
       };
 
       const result = await runOrchestrator(message, args);
