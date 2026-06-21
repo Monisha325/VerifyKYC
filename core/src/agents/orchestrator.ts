@@ -76,16 +76,23 @@ function scoreMessage(message: string, patterns: RegExp[]): number {
   return patterns.reduce((n, re) => n + (re.test(message) ? 1 : 0), 0);
 }
 
-function inferAgent(message: string): 'auth' | 'kyc' | 'members' {
+function inferAgent(message: string, role?: string): 'auth' | 'kyc' | 'members' {
   const authScore    = scoreMessage(message, AUTH_PATTERNS);
   const kycScore     = scoreMessage(message, KYC_PATTERNS);
   const membersScore = scoreMessage(message, MEMBERS_PATTERNS);
 
-  if (authScore === 0 && kycScore === 0 && membersScore === 0) return 'kyc';
+  // Role-aware default for ambiguous/unmatched messages. REVIEWER and ADMIN
+  // have zero overlap with kyc-agent tools (see TOOLS_BY_ROLE in
+  // AgentChat.tsx) — defaulting them to 'kyc' left them with a routing
+  // message and no matching action buttons to click.
+  const defaultAgent: 'kyc' | 'members' =
+    role === 'REVIEWER' || role === 'ADMIN' ? 'members' : 'kyc';
+
+  if (authScore === 0 && kycScore === 0 && membersScore === 0) return defaultAgent;
 
   if (authScore >= kycScore && authScore >= membersScore) return 'auth';
-  if (membersScore > kycScore) return 'members';
-  return 'kyc';
+  if (kycScore === membersScore) return defaultAgent;
+  return kycScore > membersScore ? 'kyc' : 'members';
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -112,7 +119,7 @@ export async function runOrchestrator(
   }
 
   // 2. Natural language — keyword routing
-  const agent = inferAgent(message);
+  const agent = inferAgent(message, args.role);
   return {
     content: [{
       type: 'text',
