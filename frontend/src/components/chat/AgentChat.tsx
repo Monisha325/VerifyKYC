@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Send, Loader2, Bot, User, AlertCircle, Wrench } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -30,6 +31,7 @@ interface Message {
 }
 
 export default function AgentChat() {
+  const router = useRouter();
   const { user } = useAuth();
   const { app, loading: appLoading } = useApplication();
   const currentApplicationId = app?.id ?? null;
@@ -101,6 +103,31 @@ export default function AgentChat() {
 
   async function sendTool(toolName: string) {
     if (loading) return;
+
+    // submit_decision needs a real decision + reason codes, which a chat
+    // button can't collect — deep-link to the existing review UI instead of
+    // duplicating that form here.
+    if (toolName === 'submit_decision') {
+      const applicationId = window.prompt('Application ID to submit a decision for:');
+      if (!applicationId) return;
+      router.push(`/admin/${applicationId.trim()}`);
+      return;
+    }
+
+    // These tools need one id the chat has no existing context for (there's
+    // no "current application" on the admin chat page the way there is for
+    // an applicant's own application) — prompt for it before calling.
+    const promptCfg = TOOL_ARG_PROMPTS[toolName];
+    if (promptCfg) {
+      const value = window.prompt(promptCfg.label)?.trim();
+      if (!value) return;
+      await sendPayload(
+        { tool: toolName, args: { ...promptCfg.extraArgs, [promptCfg.argKey]: value } },
+        `${toolName} (${value})`,
+      );
+      return;
+    }
+
     await sendPayload({ tool: toolName, args: {} }, toolName);
   }
 
@@ -248,7 +275,6 @@ function Bubble({ msg, onTool, allowedTools, appLoading }: { msg: Message; onToo
 }
 
 // Per-role pill allowlists. applicationId is injected automatically for tools that need it.
-// Tools requiring args that can't be inferred (documentId, decision, etc.) are excluded.
 const TOOLS_BY_ROLE: Record<string, Set<string>> = {
   APPLICANT: new Set([
     'create_application',
@@ -257,16 +283,41 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'get_current_user',
     'logout',
   ]),
+  // reviewerId/reviewerRole are auto-injected server-side (agent.router.ts),
+  // same as userId/role above. applicationId/entityId have no equivalent
+  // auto-fillable context here (no single "current application" for a
+  // reviewer browsing a queue of many) — those prompt for the id on click,
+  // see TOOL_ARG_PROMPTS. submit_decision deep-links to the existing
+  // /admin/[id] review UI instead of trying to collect decision + reason
+  // codes through a chat button.
   REVIEWER: new Set([
     'get_review_queue',
+    'get_evidence_bundle',
+    'claim_application',
+    'submit_decision',
+    'get_audit_trail',
     'get_current_user',
     'logout',
   ]),
   ADMIN: new Set([
     'get_review_queue',
+    'get_evidence_bundle',
+    'claim_application',
+    'submit_decision',
+    'get_audit_trail',
     'get_current_user',
     'logout',
   ]),
+};
+
+// Tools whose one missing argument is collected via a prompt on click,
+// rather than auto-injected context. entity defaults to 'KycApplication'
+// for get_audit_trail since that's the only entity type relevant from a
+// review-queue context.
+const TOOL_ARG_PROMPTS: Record<string, { label: string; argKey: string; extraArgs?: Record<string, unknown> }> = {
+  get_evidence_bundle: { label: 'Application ID to fetch the evidence bundle for:', argKey: 'applicationId' },
+  claim_application:   { label: 'Application ID to claim:',                          argKey: 'applicationId' },
+  get_audit_trail:     { label: 'Application ID to view the audit trail for:',        argKey: 'entityId', extraArgs: { entity: 'KycApplication' } },
 };
 
 // ── Agent message content (routing vs tool result vs plain text) ───────────────
