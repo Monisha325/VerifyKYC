@@ -117,6 +117,36 @@ app.get('/debug/db-info', async (_req, res) => {
   }
 });
 
+// ── TEMPORARY one-time fix — remove immediately after use ────────────────────
+// Render's release-phase `prisma migrate deploy` has not been applying this
+// column to production despite two deploys (confirmed via /debug/db-info
+// above: the column is absent on the runtime database). Rather than rely on
+// the release phase again, this runs the same idempotent statement through
+// the app's own already-connected Prisma client — same DATABASE_URL/
+// DIRECT_URL the running app proved it uses. Gated on a literal embedded in
+// this commit, not an env var (production's INTERNAL_TOKEN value isn't
+// known here) — the whole endpoint is deleted in the very next commit after
+// use, so the exposure window is the few minutes this is live.
+app.post('/debug/fix-is-active', async (req, res) => {
+  if (req.headers['x-fix-token'] !== 'tmp-fix-isactive-7f3a9c2e') {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  try {
+    await prisma.$executeRawUnsafe(
+      'ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "isActive" BOOLEAN NOT NULL DEFAULT true;'
+    );
+    const columns = await prisma.$queryRaw<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns WHERE table_name = 'users'
+    `;
+    res.json({
+      applied: true,
+      isActive_present: columns.some(c => c.column_name === 'isActive'),
+    });
+  } catch (e: unknown) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
 app.get('/api/v1/ping', (_req, res) => res.json({ pong: true }));
 
 app.use('/api/v1/auth', authRoutes);
