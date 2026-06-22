@@ -141,6 +141,73 @@ export async function sendOtpEmail(email: string, otp: string): Promise<void> {
   }
 }
 
+function buildResetHtml(resetToken: string): string {
+  return `<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#f4f4f4;font-family:Inter,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td align="center" style="padding:40px 0;">
+        <table width="480" cellpadding="0" cellspacing="0"
+               style="background:#ffffff;border-radius:12px;
+                      overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+          <tr>
+            <td style="background:#1B4F72;padding:32px;text-align:center;">
+              <h1 style="color:#ffffff;margin:0;font-size:24px;
+                         font-weight:700;letter-spacing:1px;">VeriKYC</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:40px 32px;">
+              <h2 style="color:#1B4F72;margin:0 0 8px;font-size:20px;">
+                Reset your password
+              </h2>
+              <p style="color:#666;margin:0 0 24px;font-size:15px;line-height:1.5;">
+                Use this code to reset your VeriKYC password. It expires in
+                <strong>30 minutes</strong>.
+              </p>
+              <div style="background:#f0f4f8;border:2px solid #1B4F72;
+                          border-radius:12px;padding:20px;text-align:center;
+                          margin:0 0 24px;word-break:break-all;">
+                <code style="font-size:13px;color:#1B4F72;">${resetToken}</code>
+              </div>
+              <p style="color:#999;font-size:12px;margin:0;line-height:1.6;">
+                If you did not request a password reset, you can safely
+                ignore this email — your password will not be changed.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+export async function sendPasswordResetEmail(email: string, resetToken: string): Promise<void> {
+  console.log(`[RESET] Password reset token for ${email} generated (logged for dev visibility only)`);
+
+  const brevo = getBrevoClient();
+  if (!brevo || !process.env.BREVO_FROM_EMAIL) {
+    console.log('[RESET] ⚠️  Brevo not configured — reset email not sent.');
+    return;
+  }
+
+  try {
+    await brevo.transactionalEmails.sendTransacEmail({
+      sender:      { email: process.env.BREVO_FROM_EMAIL, name: 'VeriKYC' },
+      to:          [{ email }],
+      subject:     'Reset your VeriKYC password',
+      htmlContent: buildResetHtml(resetToken),
+    });
+    console.log('[RESET] ✅ Password reset email sent to:', email);
+  } catch (err: unknown) {
+    const e = err as { message?: string };
+    console.error('[RESET] ❌ sendPasswordResetEmail failed:', e.message ?? String(err));
+  }
+}
+
 export async function createOtpRecord(userId: string, otp: string): Promise<void> {
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   console.log(`[OTP] 💾 Storing OTP hash for userId: ${userId}`);

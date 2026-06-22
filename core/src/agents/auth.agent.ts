@@ -8,6 +8,10 @@ import {
   resendOtp      as resendOtpService,
   rotateRefreshToken,
   logoutUser,
+  forgotPassword as forgotPasswordService,
+  resetPassword  as resetPasswordService,
+  changePassword as changePasswordService,
+  updateProfile  as updateProfileService,
 } from '../modules/auth/auth.service';
 import { verifyAccessToken } from '../lib/token.service';
 import { prisma } from '../utils/prisma';
@@ -96,6 +100,36 @@ export const authTools: Record<string, (args: Record<string, unknown>) => Promis
       return text(user);
     } catch (e) { return toolError(e); }
   },
+
+  forgot_password: async (args) => {
+    const a = args as { email: string };
+    try {
+      return text(await forgotPasswordService(a));
+    } catch (e) { return toolError(e); }
+  },
+
+  reset_password: async (args) => {
+    const a = args as { resetToken: string; newPassword: string };
+    try {
+      return text(await resetPasswordService(a));
+    } catch (e) { return toolError(e); }
+  },
+
+  change_password: async (args) => {
+    const { userId, currentPassword, newPassword } = args as {
+      userId: string; currentPassword: string; newPassword: string;
+    };
+    try {
+      return text(await changePasswordService(userId, { currentPassword, newPassword }));
+    } catch (e) { return toolError(e); }
+  },
+
+  update_profile: async (args) => {
+    const { userId, fullName, phone } = args as { userId: string; fullName?: string; phone?: string };
+    try {
+      return text(await updateProfileService(userId, { fullName, phone }));
+    } catch (e) { return toolError(e); }
+  },
 };
 
 // ── MCP server — delegates to authTools so each handler is reachable directly ──
@@ -169,4 +203,45 @@ authAgent.tool(
     accessToken: z.string(),
   },
   (args) => authTools.get_current_user(args),
+);
+
+authAgent.tool(
+  'forgot_password',
+  'Request a password reset. Always returns a generic confirmation message regardless of whether the email exists, to avoid leaking account existence. If the email is registered, a reset token is emailed.',
+  {
+    email: z.string().email(),
+  },
+  (args) => authTools.forgot_password(args),
+);
+
+authAgent.tool(
+  'reset_password',
+  'Reset a password using the token emailed by forgot_password. Expires after 30 minutes. Revokes all existing sessions for the account.',
+  {
+    resetToken:  z.string(),
+    newPassword: z.string().min(8).max(128),
+  },
+  (args) => authTools.reset_password(args),
+);
+
+authAgent.tool(
+  'change_password',
+  'Change the password for the currently authenticated user. Requires the current password. Revokes all existing sessions, including the current one — the caller must log in again afterward.',
+  {
+    userId:          z.string(),
+    currentPassword: z.string(),
+    newPassword:     z.string().min(8).max(128),
+  },
+  (args) => authTools.change_password(args),
+);
+
+authAgent.tool(
+  'update_profile',
+  'Update the current user\'s fullName and/or phone. Both fields are optional — only the ones provided are changed.',
+  {
+    userId:   z.string(),
+    fullName: z.string().min(2).max(100).optional(),
+    phone:    z.string().optional(),
+  },
+  (args) => authTools.update_profile(args),
 );

@@ -7,14 +7,20 @@ import {
   generateRawRefreshToken,
   hashToken,
   refreshTokenExpiry,
+  signPasswordResetToken,
+  verifyPasswordResetToken,
 } from '../../lib/token.service';
 import {
   generateOtp,
   sendOtpEmail,
   createOtpRecord,
   verifyOtp,
+  sendPasswordResetEmail,
 } from './otp.service';
-import { RegisterDto, LoginDto, VerifyEmailDto, ResendOtpDto } from './auth.schema';
+import {
+  RegisterDto, LoginDto, VerifyEmailDto, ResendOtpDto,
+  ForgotPasswordDto, ResetPasswordDto, ChangePasswordDto, UpdateProfileDto,
+} from './auth.schema';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -96,6 +102,9 @@ export async function loginUser(
 
   if (!user.emailVerified) {
     throw new AppError(403, 'Email not verified', 'EMAIL_NOT_VERIFIED');
+  }
+  if (!user.isActive) {
+    throw new AppError(403, 'This account has been disabled', 'ACCOUNT_DISABLED');
   }
 
   const { raw, hashed, expiresAt, family } = makeTokenSet();
@@ -248,4 +257,184 @@ export async function logoutUser(
     sameSite: 'strict',
     path:     '/api/v1/auth',
   });
+}
+
+// ─── Forgot password ──────────────────────────────────────────────────────────
+// Always returns the same generic message regardless of whether the email
+// exists — same email-enumeration guard as resendOtp.
+
+export async function forgotPassword(
+  dto: ForgotPasswordDto,
+): Promise<{ message: string }> {
+  const user = await prisma.user.findUnique({
+    where:  { email: dto.email.toLowerCase().trim() },
+    select: { id: true, email: true },
+  });
+
+  if (user) {
+    const resetToken = signPasswordResetToken(user.id);
+    sendPasswordResetEmail(user.email, resetToken)
+      .catch(e => console.error('[RESET] Background send failed:', e));
+    await audit({ action: 'PASSWORD_RESET_REQUESTED', entity: 'User', entityId: user.id, actorId: user.id });
+  }
+
+  return { message: 'If this email exists, a password reset link has been sent.' };
+}
+
+// ─── Reset password (via emailed token) ──────────────────────────────────────
+// Revokes every existing refresh token for the user — a password reset should
+// end every other session, not just rotate the one in use.
+
+export async function resetPassword(
+  dto: ResetPasswordDto,
+): Promise<{ message: string }> {
+  let userId: string;
+  try {
+    userId = verifyPasswordResetToken(dto.resetToken).sub;
+  } catch {
+    throw new AppError(401, 'Invalid or expired reset token');
+  }
+
+  const passwordHash = await argon2Hash(dto.newPassword);
+  await prisma.$transaction([
+    prisma.user.update({ where: { id: userId }, data: { passwordHash } }),
+    prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data:  { revokedAt: new Date() },
+    }),
+  ]);
+
+  await audit({ action: 'PASSWORD_RESET', entity: 'User', entityId: userId, actorId: userId });
+
+  return { message: 'Password reset successfully. Please log in again.' };
+}
+
+// ─── Change password (while logged in) ───────────────────────────────────────
+
+export async function changePassword(
+  userId: string,
+  dto: ChangePasswordDto,
+): Promise<{ message: string }> {
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+
+  const valid = await argon2Verify(user.passwordHash, dto.currentPassword);
+  if (!valid) throw new AppError(401, 'Current password is incorrect');
+
+  const passwordHash = await argon2Hash(dto.newPassword);
+  await prisma.$transaction([
+    prisma.user.update({ where: { id: userId }, data: { passwordHash } }),
+    prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data:  { revokedAt: new Date() },
+    }),
+  ]);
+
+  await audit({ action: 'PASSWORD_CHANGED', entity: 'User', entityId: userId, actorId: userId });
+
+  return { message: 'Password changed successfully. Please log in again.' };
+}
+
+// ─── Update profile ───────────────────────────────────────────────────────────
+
+export async function updateProfile(userId: string, dto: UpdateProfileDto) {
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data:  {
+      ...(dto.fullName !== undefined && { fullName: dto.fullName }),
+      ...(dto.phone    !== undefined && { phone:    dto.phone }),
+    },
+    select: { id: true, email: true, fullName: true, phone: true, role: true, isVerified: true, emailVerified: true, createdAt: true, updatedAt: true },
+  });
+
+  await audit({ action: 'PROFILE_UPDATED', entity: 'User', entityId: userId, actorId: userId });
+
+  return user;
+}
+
+// ─── Admin user management ────────────────────────────────────────────────────
+// All four below are ADMIN-only actions — enforced by the agent dispatch layer
+// (orchestrator.ts), not here. These functions assume the caller has already
+// been authorized.
+
+export async function createReviewer(
+  actorId: string,
+  dto: { email: string; password: string; fullName: string; phone?: string },
+): Promise<{ id: string; email: string; fullName: string; role: string }> {
+  const email = dto.email.toLowerCase().trim();
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) throw new AppError(409, 'Email already registered');
+
+  const passwordHash = await argon2Hash(dto.password);
+  // Admin-provisioned accounts skip OTP — the admin is vouching for the email directly.
+  const user = await prisma.user.create({
+    data: {
+      email, passwordHash, fullName: dto.fullName.trim(), phone: dto.phone,
+      role: 'REVIEWER', emailVerified: true, isVerified: true,
+    },
+    select: { id: true, email: true, fullName: true, role: true },
+  });
+
+  await audit({ action: 'REVIEWER_CREATED', entity: 'User', entityId: user.id, actorId });
+  return user;
+}
+
+export async function setUserActive(
+  actorId: string,
+  userId: string,
+  isActive: boolean,
+): Promise<{ id: string; email: string; isActive: boolean }> {
+  const user = await prisma.user.update({
+    where:  { id: userId },
+    data:   { isActive },
+    select: { id: true, email: true, isActive: true },
+  });
+
+  // Disabling a user mid-session should actually end their session, not just
+  // block future logins — revoke any live refresh tokens immediately.
+  if (!isActive) {
+    await prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data:  { revokedAt: new Date() },
+    });
+  }
+
+  await audit({
+    action:   isActive ? 'USER_ENABLED' : 'USER_DISABLED',
+    entity:   'User',
+    entityId: userId,
+    actorId,
+  });
+  return user;
+}
+
+export async function listUsers(role?: string) {
+  return prisma.user.findMany({
+    where:   role ? { role: role as 'APPLICANT' | 'REVIEWER' | 'ADMIN' } : undefined,
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true, email: true, fullName: true, phone: true, role: true,
+      isActive: true, isVerified: true, emailVerified: true, createdAt: true,
+    },
+  });
+}
+
+export async function manageRole(
+  actorId: string,
+  userId: string,
+  newRole: 'APPLICANT' | 'REVIEWER' | 'ADMIN',
+): Promise<{ id: string; email: string; role: string }> {
+  const user = await prisma.user.update({
+    where:  { id: userId },
+    data:   { role: newRole },
+    select: { id: true, email: true, role: true },
+  });
+
+  await audit({
+    action:   'ROLE_CHANGED',
+    entity:   'User',
+    entityId: userId,
+    actorId,
+    meta:     { newRole },
+  });
+  return user;
 }

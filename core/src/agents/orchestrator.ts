@@ -6,9 +6,9 @@ type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: tr
 
 // ── Exact tool name dispatch (highest priority) ────────────────────────────────
 
-const AUTH_TOOL_NAMES    = new Set(['register_user', 'login_user', 'verify_email', 'resend_otp', 'refresh_token', 'logout', 'get_current_user']);
+const AUTH_TOOL_NAMES    = new Set(['register_user', 'login_user', 'verify_email', 'resend_otp', 'refresh_token', 'logout', 'get_current_user', 'forgot_password', 'reset_password', 'change_password', 'update_profile']);
 const KYC_TOOL_NAMES     = new Set(['create_application', 'get_upload_params', 'register_document', 'submit_application', 'get_application_status', 'get_application', 'get_document', 'cancel_application']);
-const MEMBERS_TOOL_NAMES = new Set(['get_review_queue', 'get_evidence_bundle', 'claim_application', 'submit_decision', 'get_audit_trail']);
+const MEMBERS_TOOL_NAMES = new Set(['get_review_queue', 'get_evidence_bundle', 'claim_application', 'submit_decision', 'get_audit_trail', 'create_reviewer', 'disable_reviewer', 'enable_reviewer', 'list_users', 'manage_roles', 'system_audit_logs']);
 
 // Human-readable labels for the tool-selection buttons shown in chat when a
 // message is routed but not specific enough to dispatch automatically.
@@ -21,6 +21,10 @@ const TOOL_LABELS: Record<string, string> = {
   refresh_token:           'Refresh my session',
   logout:                  'Log out',
   get_current_user:        'View my profile',
+  forgot_password:         'Forgot password',
+  reset_password:          'Reset password',
+  change_password:         'Change password',
+  update_profile:          'Update my profile',
   // kyc
   create_application:      'Start a new KYC application',
   get_upload_params:       'Get document upload link',
@@ -36,10 +40,49 @@ const TOOL_LABELS: Record<string, string> = {
   claim_application:       'Claim this application',
   submit_decision:         'Submit a decision',
   get_audit_trail:         'View audit trail',
+  // members — admin-only
+  create_reviewer:         'Create a reviewer account',
+  disable_reviewer:        'Disable a user account',
+  enable_reviewer:         'Enable a user account',
+  list_users:              'List all users',
+  manage_roles:            "Change a user's role",
+  system_audit_logs:       'View system-wide audit log',
 };
 
-function toToolOptions(names: Iterable<string>) {
-  return [...names].map(name => ({ name, label: TOOL_LABELS[name] ?? name }));
+// ── Role-based access control ─────────────────────────────────────────────────
+// Mirrors the visibility table from the auth-agent system prompt spec. Checked
+// in runOrchestrator before any tool is dispatched — this is real enforcement,
+// not just which buttons the frontend shows. A role not listed for a tool gets
+// "Access Denied: Insufficient Permissions" regardless of how the call arrives
+// (exact tool name via chat, or any other caller of runOrchestrator).
+const ADMIN_ONLY_MEMBERS_TOOLS = new Set(['create_reviewer', 'disable_reviewer', 'enable_reviewer', 'list_users', 'manage_roles', 'system_audit_logs']);
+
+const TOOL_ROLE_ACCESS: Record<string, ReadonlySet<string>> = (() => {
+  const allRoles = new Set(['APPLICANT', 'REVIEWER', 'ADMIN']);
+  const map: Record<string, ReadonlySet<string>> = {};
+  // Auth tools — every role gets the same set (spec: identical "Visible
+  // Authentication Tools" list for APPLICANT/REVIEWER/ADMIN).
+  for (const name of AUTH_TOOL_NAMES) map[name] = allRoles;
+  // KYC tools — APPLICANT only (spec lists no "Visible KYC Tools" for
+  // REVIEWER/ADMIN at all).
+  for (const name of KYC_TOOL_NAMES) map[name] = new Set(['APPLICANT']);
+  // Members tools — REVIEWER + ADMIN, except the admin-only subset.
+  for (const name of MEMBERS_TOOL_NAMES) {
+    map[name] = ADMIN_ONLY_MEMBERS_TOOLS.has(name) ? new Set(['ADMIN']) : new Set(['REVIEWER', 'ADMIN']);
+  }
+  return map;
+})();
+
+function isToolAllowedForRole(tool: string, role: string | undefined): boolean {
+  const allowed = TOOL_ROLE_ACCESS[tool];
+  if (!allowed) return false; // unknown tool — handled separately by notFound()
+  return !!role && allowed.has(role);
+}
+
+function toToolOptions(names: Iterable<string>, role: string | undefined) {
+  return [...names]
+    .filter(name => isToolAllowedForRole(name, role))
+    .map(name => ({ name, label: TOOL_LABELS[name] ?? name }));
 }
 
 // ── Keyword regex patterns (fallback for natural language messages) ────────────
@@ -110,12 +153,17 @@ export async function runOrchestrator(
 ): Promise<ToolResult> {
   const { tool, ...toolArgs } = args;
 
-  // 1. Exact tool name supplied — dispatch immediately
+  // 1. Exact tool name supplied — dispatch immediately, after a role check.
   if (tool) {
+    if (!AUTH_TOOL_NAMES.has(tool) && !KYC_TOOL_NAMES.has(tool) && !MEMBERS_TOOL_NAMES.has(tool)) {
+      return notFound(tool);
+    }
+    if (!isToolAllowedForRole(tool, args.role)) {
+      return accessDenied();
+    }
     if (AUTH_TOOL_NAMES.has(tool))    return authTools[tool]?.(toolArgs)    ?? notFound(tool);
     if (KYC_TOOL_NAMES.has(tool))     return kycTools[tool]?.(toolArgs)     ?? notFound(tool);
-    if (MEMBERS_TOOL_NAMES.has(tool)) return membersTools[tool]?.(toolArgs) ?? notFound(tool);
-    return notFound(tool);
+    return membersTools[tool]?.(toolArgs) ?? notFound(tool);
   }
 
   // 2. Natural language — keyword routing
@@ -127,10 +175,10 @@ export async function runOrchestrator(
         agent,
         message: `Routed to ${agent} agent. Provide a specific tool name via the "tool" field to execute an action.`,
         availableTools: agent === 'auth'
-          ? toToolOptions(AUTH_TOOL_NAMES)
+          ? toToolOptions(AUTH_TOOL_NAMES, args.role)
           : agent === 'kyc'
-            ? toToolOptions(KYC_TOOL_NAMES)
-            : toToolOptions(MEMBERS_TOOL_NAMES),
+            ? toToolOptions(KYC_TOOL_NAMES, args.role)
+            : toToolOptions(MEMBERS_TOOL_NAMES, args.role),
       }),
     }],
   };
@@ -139,6 +187,13 @@ export async function runOrchestrator(
 function notFound(tool: string): ToolResult {
   return {
     content: [{ type: 'text', text: `Unknown tool: "${tool}"` }],
+    isError: true,
+  };
+}
+
+function accessDenied(): ToolResult {
+  return {
+    content: [{ type: 'text', text: 'Access Denied: Insufficient Permissions' }],
     isError: true,
   };
 }

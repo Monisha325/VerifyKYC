@@ -11,6 +11,19 @@ export async function getEntityHistory(entity: string, entityId: string) {
   });
 }
 
+// System-wide recent activity — unscoped, ADMIN-only (enforced by the agent
+// dispatch layer). Distinct from getEntityHistory, which is scoped to one
+// entity instance.
+export async function getRecentAuditEvents(limit = 100) {
+  return prisma.auditEvent.findMany({
+    orderBy: { createdAt: 'desc' },
+    take:    Math.min(limit, 500),
+    include: {
+      actor: { select: { id: true, fullName: true, email: true, role: true } },
+    },
+  });
+}
+
 interface AuditParams {
   action: string;
   entity: string;
