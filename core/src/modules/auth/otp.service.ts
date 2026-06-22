@@ -142,6 +142,11 @@ export async function sendOtpEmail(email: string, otp: string): Promise<void> {
 }
 
 function buildResetHtml(resetToken: string): string {
+  // FRONTEND_ORIGIN is already used elsewhere (CORS) as the canonical deployed
+  // frontend URL — reusing it here avoids hardcoding a second copy of it.
+  const base = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
+  const resetUrl = `${base}/reset-password?token=${encodeURIComponent(resetToken)}`;
+
   return `<!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:#f4f4f4;font-family:Inter,Arial,sans-serif;">
@@ -163,14 +168,21 @@ function buildResetHtml(resetToken: string): string {
                 Reset your password
               </h2>
               <p style="color:#666;margin:0 0 24px;font-size:15px;line-height:1.5;">
-                Use this code to reset your VeriKYC password. It expires in
-                <strong>30 minutes</strong>.
+                Click the button below to choose a new VeriKYC password. This
+                link expires in <strong>30 minutes</strong>.
               </p>
-              <div style="background:#f0f4f8;border:2px solid #1B4F72;
-                          border-radius:12px;padding:20px;text-align:center;
-                          margin:0 0 24px;word-break:break-all;">
-                <code style="font-size:13px;color:#1B4F72;">${resetToken}</code>
+              <div style="text-align:center;margin:0 0 24px;">
+                <a href="${resetUrl}"
+                   style="display:inline-block;background:#1B4F72;color:#ffffff;
+                          text-decoration:none;font-weight:600;font-size:15px;
+                          padding:14px 32px;border-radius:8px;">
+                  Reset password
+                </a>
               </div>
+              <p style="color:#999;font-size:12px;margin:0 0 24px;line-height:1.6;">
+                If the button doesn't work, copy and paste this link into your browser:<br>
+                <a href="${resetUrl}" style="color:#1B4F72;word-break:break-all;">${resetUrl}</a>
+              </p>
               <p style="color:#999;font-size:12px;margin:0;line-height:1.6;">
                 If you did not request a password reset, you can safely
                 ignore this email — your password will not be changed.

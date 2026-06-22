@@ -173,15 +173,20 @@ function LoginInner() {
               error={errors.email?.message}
               {...register('email')}
             />
-            <Input
-              label="Password"
-              type="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
-              icon={<Lock className="w-4 h-4" />}
-              error={errors.password?.message}
-              {...register('password')}
-            />
+            <div>
+              <Input
+                label="Password"
+                type="password"
+                autoComplete="current-password"
+                placeholder="••••••••"
+                icon={<Lock className="w-4 h-4" />}
+                error={errors.password?.message}
+                {...register('password')}
+              />
+              <Link href="/forgot-password" className="mt-1.5 inline-block text-sm font-medium text-brand-navy hover:text-brand-blue">
+                Forgot password?
+              </Link>
+            </div>
 
             {error && (
               <div className="rounded-xl bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-700 space-y-2">

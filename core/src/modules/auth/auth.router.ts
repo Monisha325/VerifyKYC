@@ -2,7 +2,7 @@ import { Router }      from 'express';
 import rateLimit       from 'express-rate-limit';
 import { RedisStore }  from 'rate-limit-redis';
 import IORedis         from 'ioredis';
-import { register, login, verifyEmail, resendOtp, refresh, logout, me } from './auth.controller';
+import { register, login, verifyEmail, resendOtp, refresh, logout, me, forgotPassword, resetPassword } from './auth.controller';
 import { requireAuth } from '../../middleware/auth.middleware';
 
 // ── Redis store (Upstash in production; falls back to in-memory in dev) ───────
@@ -66,14 +66,30 @@ const resendLimiter = rateLimit({
   ...(resendStore && { store: resendStore }),
 });
 
+// Same shape as resendLimiter — this also triggers an email send, same abuse
+// surface (mass-emailing a target, or probing which emails are registered).
+const forgotPasswordStore = makeRedisStore('rl:verikyc:forgot:');
+const forgotPasswordLimiter = rateLimit({
+  windowMs:        10 * 60 * 1000,
+  max:             3,
+  standardHeaders: 'draft-7',
+  legacyHeaders:   false,
+  message:         { error: 'Too many password reset requests. Please wait 10 minutes.' },
+  keyGenerator:    (req) => String(req.body?.email ?? 'anonymous'),
+  skip:            () => process.env.NODE_ENV !== 'production',
+  ...(forgotPasswordStore && { store: forgotPasswordStore }),
+});
+
 const router = Router();
 
-router.post('/register',     credentialLimiter, register);
-router.post('/login',        credentialLimiter, login);
-router.post('/verify-email', verifyEmail);
-router.post('/resend-otp',   resendLimiter,     resendOtp);
-router.post('/refresh',      refreshLimiter,    refresh);
-router.post('/logout',       logout);
-router.get('/me',            requireAuth,       me);
+router.post('/register',        credentialLimiter,       register);
+router.post('/login',           credentialLimiter,       login);
+router.post('/verify-email',    verifyEmail);
+router.post('/resend-otp',      resendLimiter,           resendOtp);
+router.post('/forgot-password', forgotPasswordLimiter,   forgotPassword);
+router.post('/reset-password',  credentialLimiter,       resetPassword);
+router.post('/refresh',         refreshLimiter,          refresh);
+router.post('/logout',          logout);
+router.get('/me',               requireAuth,             me);
 
 export default router;

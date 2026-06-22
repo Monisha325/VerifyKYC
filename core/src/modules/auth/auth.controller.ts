@@ -4,6 +4,8 @@ import {
   LoginSchema,
   VerifyEmailSchema,
   ResendOtpSchema,
+  ForgotPasswordSchema,
+  ResetPasswordSchema,
 } from './auth.schema';
 import {
   registerUser,
@@ -12,6 +14,8 @@ import {
   resendOtp     as resendOtpService,
   rotateRefreshToken,
   logoutUser,
+  forgotPassword as forgotPasswordService,
+  resetPassword  as resetPasswordService,
 } from './auth.service';
 import { AppError } from '../../middleware/errorHandler';
 import { prisma }   from '../../utils/prisma';
@@ -37,6 +41,18 @@ export async function verifyEmail(req: Request, res: Response) {
 export async function resendOtp(req: Request, res: Response) {
   const dto    = ResendOtpSchema.parse(req.body);
   const result = await resendOtpService(dto);
+  res.json(result);
+}
+
+export async function forgotPassword(req: Request, res: Response) {
+  const dto    = ForgotPasswordSchema.parse(req.body);
+  const result = await forgotPasswordService(dto);
+  res.json(result);
+}
+
+export async function resetPassword(req: Request, res: Response) {
+  const dto    = ResetPasswordSchema.parse(req.body);
+  const result = await resetPasswordService(dto);
   res.json(result);
 }
 
