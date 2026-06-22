@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Send, Loader2, Bot, User, AlertCircle, Wrench, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -32,7 +31,6 @@ interface Message {
 }
 
 export default function AgentChat() {
-  const router = useRouter();
   const { user } = useAuth();
   const { app, loading: appLoading } = useApplication();
   const currentApplicationId = app?.id ?? null;
@@ -143,16 +141,6 @@ export default function AgentChat() {
         return;
       }
       await sendPayload({ tool: toolName, args: { targetUserId, newRole } }, `manage_roles (${targetUserId} -> ${newRole})`);
-      return;
-    }
-
-    // submit_decision needs a real decision + reason codes, which a chat
-    // button can't collect — deep-link to the existing review UI instead of
-    // duplicating that form here.
-    if (toolName === 'submit_decision') {
-      const applicationId = window.prompt('Application ID to submit a decision for:');
-      if (!applicationId) return;
-      router.push(`/admin/${applicationId.trim()}`);
       return;
     }
 
@@ -435,29 +423,19 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'change_password',
   ]),
   // reviewerId/reviewerRole are auto-injected server-side (agent.router.ts),
-  // same as userId/role above. applicationId/entityId have no equivalent
-  // auto-fillable context here (no single "current application" for a
-  // reviewer browsing a queue of many) — those prompt for the id on click,
-  // see TOOL_ARG_PROMPTS. submit_decision deep-links to the existing
-  // /admin/[id] review UI instead of trying to collect decision + reason
-  // codes through a chat button.
+  // get_review_queue/get_evidence_bundle/claim_application/submit_decision/
+  // get_audit_trail are deliberately NOT here — /admin/queue, /admin/[id],
+  // and /admin/audit already do these with a better UI (image previews,
+  // score gauges, a real decision form, a search box) than a chat button
+  // prompting for a raw id ever could. Kept only what has no other
+  // interface: profile/password tools, and (ADMIN) user management below.
   REVIEWER: new Set([
-    'get_review_queue',
-    'get_evidence_bundle',
-    'claim_application',
-    'submit_decision',
-    'get_audit_trail',
     'get_current_user',
     'forgot_password',
     'update_profile',
     'change_password',
   ]),
   ADMIN: new Set([
-    'get_review_queue',
-    'get_evidence_bundle',
-    'claim_application',
-    'submit_decision',
-    'get_audit_trail',
     'get_current_user',
     'forgot_password',
     'update_profile',
@@ -476,16 +454,11 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
 };
 
 // Tools whose one missing argument is collected via a prompt on click,
-// rather than auto-injected context. entity defaults to 'KycApplication'
-// for get_audit_trail since that's the only entity type relevant from a
-// review-queue context.
+// rather than auto-injected context.
 const TOOL_ARG_PROMPTS: Record<string, { label: string; argKey: string; extraArgs?: Record<string, unknown> }> = {
-  get_evidence_bundle: { label: 'Application ID to fetch the evidence bundle for:', argKey: 'applicationId' },
-  claim_application:   { label: 'Application ID to claim:',                          argKey: 'applicationId' },
-  get_audit_trail:     { label: 'Application ID to view the audit trail for:',        argKey: 'entityId', extraArgs: { entity: 'KycApplication' } },
-  forgot_password:     { label: 'Email address to send the password reset link to:',  argKey: 'email' },
-  disable_reviewer:    { label: 'User ID to disable:',                                argKey: 'targetUserId' },
-  enable_reviewer:     { label: 'User ID to re-enable:',                              argKey: 'targetUserId' },
+  forgot_password:  { label: 'Email address to send the password reset link to:', argKey: 'email' },
+  disable_reviewer: { label: 'User ID to disable:',                               argKey: 'targetUserId' },
+  enable_reviewer:  { label: 'User ID to re-enable:',                             argKey: 'targetUserId' },
 };
 
 // ── Agent message content (routing vs tool result vs plain text) ───────────────
