@@ -2,12 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, Loader2, Bot, User, AlertCircle, Wrench } from 'lucide-react';
+import { Send, Loader2, Bot, User, AlertCircle, Wrench, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useApplication } from '@/context/ApplicationContext';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
+import Input from '@/components/ui/Input';
 import { cn } from '@/lib/utils';
 
 interface ToolOption {
@@ -43,6 +44,7 @@ export default function AgentChat() {
   }]);
   const [input, setInput]   = useState('');
   const [loading, setLoading] = useState(false);
+  const [passwordModalTool, setPasswordModalTool] = useState<'change_password' | 'reset_password' | null>(null);
   const bottomRef   = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -104,6 +106,14 @@ export default function AgentChat() {
   async function sendTool(toolName: string) {
     if (loading) return;
 
+    // Passwords need masked input — window.prompt() (used below for
+    // everything else) shows plaintext on screen while typing, which is
+    // fine for an application ID but not for a password.
+    if (toolName === 'change_password' || toolName === 'reset_password') {
+      setPasswordModalTool(toolName);
+      return;
+    }
+
     // submit_decision needs a real decision + reason codes, which a chat
     // button can't collect — deep-link to the existing review UI instead of
     // duplicating that form here.
@@ -111,6 +121,19 @@ export default function AgentChat() {
       const applicationId = window.prompt('Application ID to submit a decision for:');
       if (!applicationId) return;
       router.push(`/admin/${applicationId.trim()}`);
+      return;
+    }
+
+    // Two optional fields, neither sensitive — sequential prompts, skipping
+    // whichever one the user leaves blank/cancels.
+    if (toolName === 'update_profile') {
+      const fullName = window.prompt('New full name (leave blank to keep unchanged):')?.trim();
+      const phone    = window.prompt('New phone number (leave blank to keep unchanged):')?.trim();
+      if (!fullName && !phone) return;
+      await sendPayload(
+        { tool: toolName, args: { ...(fullName && { fullName }), ...(phone && { phone }) } },
+        'update_profile',
+      );
       return;
     }
 
@@ -206,6 +229,97 @@ export default function AgentChat() {
       <p className="text-xs text-gray-400 text-center mt-2 flex-shrink-0">
         Enter to send · Shift+Enter for new line
       </p>
+
+      {passwordModalTool && (
+        <PasswordModal
+          tool={passwordModalTool}
+          onClose={() => setPasswordModalTool(null)}
+          onSubmit={async (args) => {
+            setPasswordModalTool(null);
+            await sendPayload({ tool: passwordModalTool, args }, passwordModalTool);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Password modal — masked input, used for change_password/reset_password ────
+// window.prompt() (used for every other tool needing an argument) doesn't mask
+// input, which is fine for an application ID but not for a password.
+
+function PasswordModal({
+  tool, onClose, onSubmit,
+}: {
+  tool:     'change_password' | 'reset_password';
+  onClose:  () => void;
+  onSubmit: (args: Record<string, string>) => void;
+}) {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [resetToken,      setResetToken]      = useState('');
+  const [newPassword,     setNewPassword]     = useState('');
+  const [error,           setError]           = useState('');
+
+  function submit() {
+    if (newPassword.length < 8) {
+      setError('New password must be at least 8 characters.');
+      return;
+    }
+    if (tool === 'change_password') {
+      if (!currentPassword) { setError('Current password is required.'); return; }
+      onSubmit({ currentPassword, newPassword });
+    } else {
+      if (!resetToken.trim()) { setError('Reset token is required.'); return; }
+      onSubmit({ resetToken: resetToken.trim(), newPassword });
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <Card className="w-full max-w-sm relative">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute top-3 right-3 text-gray-400 hover:text-gray-600"
+          aria-label="Close"
+        >
+          <X className="w-4 h-4" />
+        </button>
+        <h2 className="text-base font-semibold text-gray-900 mb-4">
+          {tool === 'change_password' ? 'Change password' : 'Reset password'}
+        </h2>
+        <div className="space-y-3">
+          {tool === 'change_password' ? (
+            <Input
+              type="password"
+              label="Current password"
+              value={currentPassword}
+              onChange={e => setCurrentPassword(e.target.value)}
+              autoFocus
+            />
+          ) : (
+            <Input
+              type="text"
+              label="Reset token (from your email)"
+              value={resetToken}
+              onChange={e => setResetToken(e.target.value)}
+              autoFocus
+            />
+          )}
+          <Input
+            type="password"
+            label="New password"
+            value={newPassword}
+            onChange={e => setNewPassword(e.target.value)}
+            hint="At least 8 characters"
+          />
+          {error && <p className="text-xs text-rose-600">{error}</p>}
+        </div>
+        <div className="flex justify-end gap-2 mt-5">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit}>Submit</Button>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -282,6 +396,10 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'get_application',        // applicationId injected automatically
     'get_current_user',
     'logout',
+    'forgot_password',
+    'update_profile',
+    'change_password',
+    'reset_password',
   ]),
   // reviewerId/reviewerRole are auto-injected server-side (agent.router.ts),
   // same as userId/role above. applicationId/entityId have no equivalent
@@ -298,6 +416,10 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'get_audit_trail',
     'get_current_user',
     'logout',
+    'forgot_password',
+    'update_profile',
+    'change_password',
+    'reset_password',
   ]),
   ADMIN: new Set([
     'get_review_queue',
@@ -307,6 +429,10 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'get_audit_trail',
     'get_current_user',
     'logout',
+    'forgot_password',
+    'update_profile',
+    'change_password',
+    'reset_password',
   ]),
 };
 
@@ -318,6 +444,7 @@ const TOOL_ARG_PROMPTS: Record<string, { label: string; argKey: string; extraArg
   get_evidence_bundle: { label: 'Application ID to fetch the evidence bundle for:', argKey: 'applicationId' },
   claim_application:   { label: 'Application ID to claim:',                          argKey: 'applicationId' },
   get_audit_trail:     { label: 'Application ID to view the audit trail for:',        argKey: 'entityId', extraArgs: { entity: 'KycApplication' } },
+  forgot_password:     { label: 'Email address to send the password reset link to:',  argKey: 'email' },
 };
 
 // ── Agent message content (routing vs tool result vs plain text) ───────────────
