@@ -430,7 +430,6 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'get_application_status', // applicationId injected automatically
     'get_application',        // applicationId injected automatically
     'get_current_user',
-    'logout',
     'forgot_password',
     'update_profile',
     'change_password',
@@ -449,7 +448,6 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'submit_decision',
     'get_audit_trail',
     'get_current_user',
-    'logout',
     'forgot_password',
     'update_profile',
     'change_password',
@@ -461,7 +459,6 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'submit_decision',
     'get_audit_trail',
     'get_current_user',
-    'logout',
     'forgot_password',
     'update_profile',
     'change_password',
