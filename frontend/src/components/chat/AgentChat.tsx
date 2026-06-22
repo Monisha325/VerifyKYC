@@ -44,7 +44,7 @@ export default function AgentChat() {
   }]);
   const [input, setInput]   = useState('');
   const [loading, setLoading] = useState(false);
-  const [passwordModalTool, setPasswordModalTool] = useState<'change_password' | 'reset_password' | 'create_reviewer' | null>(null);
+  const [passwordModalTool, setPasswordModalTool] = useState<'change_password' | 'create_reviewer' | null>(null);
   const bottomRef       = useRef<HTMLDivElement>(null);
   const textareaRef     = useRef<HTMLTextAreaElement>(null);
   const discoveryFired  = useRef(false); // guards against React StrictMode's double-invoked mount effect in dev
@@ -129,7 +129,7 @@ export default function AgentChat() {
     // Passwords need masked input — window.prompt() (used below for
     // everything else) shows plaintext on screen while typing, which is
     // fine for an application ID but not for a password.
-    if (toolName === 'change_password' || toolName === 'reset_password' || toolName === 'create_reviewer') {
+    if (toolName === 'change_password' || toolName === 'create_reviewer') {
       setPasswordModalTool(toolName);
       return;
     }
@@ -283,12 +283,11 @@ export default function AgentChat() {
 function PasswordModal({
   tool, onClose, onSubmit,
 }: {
-  tool:     'change_password' | 'reset_password' | 'create_reviewer';
+  tool:     'change_password' | 'create_reviewer';
   onClose:  () => void;
   onSubmit: (args: Record<string, string>) => void;
 }) {
   const [currentPassword, setCurrentPassword] = useState('');
-  const [resetToken,      setResetToken]      = useState('');
   const [newPassword,     setNewPassword]     = useState(''); // also used as create_reviewer's password field
   const [email,           setEmail]           = useState('');
   const [fullName,        setFullName]        = useState('');
@@ -307,23 +306,11 @@ function PasswordModal({
       setError('New password must be at least 8 characters.');
       return;
     }
-    if (tool === 'change_password') {
-      if (!currentPassword) { setError('Current password is required.'); return; }
-      onSubmit({ currentPassword, newPassword });
-    } else {
-      // The token is long enough that users copy-paste it from an email —
-      // strip all whitespace, not just leading/trailing, since some email
-      // clients turn the email's CSS word-wrapping into real embedded
-      // newlines/spaces on copy. A valid JWT never legitimately contains any.
-      const cleanToken = resetToken.replace(/\s+/g, '');
-      if (!cleanToken) { setError('Reset token is required.'); return; }
-      onSubmit({ resetToken: cleanToken, newPassword });
-    }
+    if (!currentPassword) { setError('Current password is required.'); return; }
+    onSubmit({ currentPassword, newPassword });
   }
 
-  const title = tool === 'change_password' ? 'Change password'
-    : tool === 'reset_password' ? 'Reset password'
-    : 'Create reviewer account';
+  const title = tool === 'change_password' ? 'Change password' : 'Create reviewer account';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
@@ -351,15 +338,6 @@ function PasswordModal({
               label="Current password"
               value={currentPassword}
               onChange={e => setCurrentPassword(e.target.value)}
-              autoFocus
-            />
-          )}
-          {tool === 'reset_password' && (
-            <Input
-              type="text"
-              label="Reset token (from your email)"
-              value={resetToken}
-              onChange={e => setResetToken(e.target.value)}
               autoFocus
             />
           )}
@@ -456,7 +434,6 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'forgot_password',
     'update_profile',
     'change_password',
-    'reset_password',
   ]),
   // reviewerId/reviewerRole are auto-injected server-side (agent.router.ts),
   // same as userId/role above. applicationId/entityId have no equivalent
@@ -476,7 +453,6 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'forgot_password',
     'update_profile',
     'change_password',
-    'reset_password',
   ]),
   ADMIN: new Set([
     'get_review_queue',
@@ -489,7 +465,6 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'forgot_password',
     'update_profile',
     'change_password',
-    'reset_password',
     // ADMIN-only — list_users/system_audit_logs need no required args (button
     // works as-is); disable/enable/manage_roles prompt for a targetUserId;
     // create_reviewer opens the password-modal pattern (it has a password
