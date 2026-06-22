@@ -44,29 +44,20 @@ export default function AgentChat() {
   }]);
   const [input, setInput]   = useState('');
   const [loading, setLoading] = useState(false);
-  const [passwordModalTool, setPasswordModalTool] = useState<'change_password' | 'reset_password' | null>(null);
-  const bottomRef   = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [passwordModalTool, setPasswordModalTool] = useState<'change_password' | 'reset_password' | 'create_reviewer' | null>(null);
+  const bottomRef       = useRef<HTMLDivElement>(null);
+  const textareaRef     = useRef<HTMLTextAreaElement>(null);
+  const discoveryFired  = useRef(false); // guards against React StrictMode's double-invoked mount effect in dev
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  async function sendPayload(body: Record<string, unknown>, displayText: string) {
-    // For tool calls, merge known context into args so pills work without manual input.
-    // Explicit args always win over injected context.
-    let payload = body;
-    if (body.tool) {
-      const tool = body.tool as string;
-      const explicitArgs = (body.args as Record<string, unknown>) ?? {};
-      const contextArgs: Record<string, unknown> = {
-        ...(currentApplicationId && { applicationId: currentApplicationId }),
-        ...explicitArgs,
-      };
-      payload = { tool, args: contextArgs };
-    }
-
-    setMessages(prev => [...prev, { id: `u-${Date.now()}`, role: 'user', raw: displayText }]);
+  // Posts to /agent/chat and appends the response as an agent/error bubble.
+  // No user bubble — used both by sendPayload (which adds one beforehand)
+  // and the silent on-mount discovery fetch (which should not look like the
+  // user typed anything).
+  async function fetchAndAppend(payload: Record<string, unknown>) {
     setLoading(true);
     try {
       const { data } = await api.post<AgentResponse>('/agent/chat', payload);
@@ -96,6 +87,35 @@ export default function AgentChat() {
     }
   }
 
+  async function sendPayload(body: Record<string, unknown>, displayText: string) {
+    // For tool calls, merge known context into args so pills work without manual input.
+    // Explicit args always win over injected context.
+    let payload = body;
+    if (body.tool) {
+      const tool = body.tool as string;
+      const explicitArgs = (body.args as Record<string, unknown>) ?? {};
+      const contextArgs: Record<string, unknown> = {
+        ...(currentApplicationId && { applicationId: currentApplicationId }),
+        ...explicitArgs,
+      };
+      payload = { tool, args: contextArgs };
+    }
+
+    setMessages(prev => [...prev, { id: `u-${Date.now()}`, role: 'user', raw: displayText }]);
+    await fetchAndAppend(payload);
+  }
+
+  // Role-aware tool discovery, shown automatically on first load (per the
+  // "welcome dashboard" requirement) without the user needing to type
+  // anything — an empty message has no domain-pattern matches, so the
+  // backend's inferAgent() naturally returns 'discovery'.
+  useEffect(() => {
+    if (discoveryFired.current) return;
+    discoveryFired.current = true;
+    fetchAndAppend({ message: '' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function send() {
     const text = input.trim();
     if (!text || loading) return;
@@ -109,8 +129,20 @@ export default function AgentChat() {
     // Passwords need masked input — window.prompt() (used below for
     // everything else) shows plaintext on screen while typing, which is
     // fine for an application ID but not for a password.
-    if (toolName === 'change_password' || toolName === 'reset_password') {
+    if (toolName === 'change_password' || toolName === 'reset_password' || toolName === 'create_reviewer') {
       setPasswordModalTool(toolName);
+      return;
+    }
+
+    if (toolName === 'manage_roles') {
+      const targetUserId = window.prompt('User ID whose role you want to change:')?.trim();
+      if (!targetUserId) return;
+      const newRole = window.prompt('New role (APPLICANT, REVIEWER, or ADMIN):')?.trim().toUpperCase();
+      if (!newRole || !['APPLICANT', 'REVIEWER', 'ADMIN'].includes(newRole)) {
+        if (newRole) window.alert(`"${newRole}" is not a valid role. Must be APPLICANT, REVIEWER, or ADMIN.`);
+        return;
+      }
+      await sendPayload({ tool: toolName, args: { targetUserId, newRole } }, `manage_roles (${targetUserId} -> ${newRole})`);
       return;
     }
 
@@ -244,23 +276,33 @@ export default function AgentChat() {
   );
 }
 
-// ── Password modal — masked input, used for change_password/reset_password ────
+// ── Password modal — masked input, used for any tool with a password field ───
 // window.prompt() (used for every other tool needing an argument) doesn't mask
 // input, which is fine for an application ID but not for a password.
 
 function PasswordModal({
   tool, onClose, onSubmit,
 }: {
-  tool:     'change_password' | 'reset_password';
+  tool:     'change_password' | 'reset_password' | 'create_reviewer';
   onClose:  () => void;
   onSubmit: (args: Record<string, string>) => void;
 }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [resetToken,      setResetToken]      = useState('');
-  const [newPassword,     setNewPassword]     = useState('');
+  const [newPassword,     setNewPassword]     = useState(''); // also used as create_reviewer's password field
+  const [email,           setEmail]           = useState('');
+  const [fullName,        setFullName]        = useState('');
+  const [phone,           setPhone]           = useState('');
   const [error,           setError]           = useState('');
 
   function submit() {
+    if (tool === 'create_reviewer') {
+      if (!email.trim())    { setError('Email is required.'); return; }
+      if (!fullName.trim()) { setError('Full name is required.'); return; }
+      if (newPassword.length < 8) { setError('Password must be at least 8 characters.'); return; }
+      onSubmit({ email: email.trim(), fullName: fullName.trim(), password: newPassword, ...(phone.trim() && { phone: phone.trim() }) });
+      return;
+    }
     if (newPassword.length < 8) {
       setError('New password must be at least 8 characters.');
       return;
@@ -274,6 +316,10 @@ function PasswordModal({
     }
   }
 
+  const title = tool === 'change_password' ? 'Change password'
+    : tool === 'reset_password' ? 'Reset password'
+    : 'Create reviewer account';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
       <Card className="w-full max-w-sm relative">
@@ -285,11 +331,16 @@ function PasswordModal({
         >
           <X className="w-4 h-4" />
         </button>
-        <h2 className="text-base font-semibold text-gray-900 mb-4">
-          {tool === 'change_password' ? 'Change password' : 'Reset password'}
-        </h2>
+        <h2 className="text-base font-semibold text-gray-900 mb-4">{title}</h2>
         <div className="space-y-3">
-          {tool === 'change_password' ? (
+          {tool === 'create_reviewer' && (
+            <>
+              <Input type="email" label="Email" value={email} onChange={e => setEmail(e.target.value)} autoFocus />
+              <Input type="text" label="Full name" value={fullName} onChange={e => setFullName(e.target.value)} />
+              <Input type="text" label="Phone (optional)" value={phone} onChange={e => setPhone(e.target.value)} />
+            </>
+          )}
+          {tool === 'change_password' && (
             <Input
               type="password"
               label="Current password"
@@ -297,7 +348,8 @@ function PasswordModal({
               onChange={e => setCurrentPassword(e.target.value)}
               autoFocus
             />
-          ) : (
+          )}
+          {tool === 'reset_password' && (
             <Input
               type="text"
               label="Reset token (from your email)"
@@ -308,7 +360,7 @@ function PasswordModal({
           )}
           <Input
             type="password"
-            label="New password"
+            label={tool === 'create_reviewer' ? 'Password' : 'New password'}
             value={newPassword}
             onChange={e => setNewPassword(e.target.value)}
             hint="At least 8 characters"
@@ -433,6 +485,16 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'update_profile',
     'change_password',
     'reset_password',
+    // ADMIN-only — list_users/system_audit_logs need no required args (button
+    // works as-is); disable/enable/manage_roles prompt for a targetUserId;
+    // create_reviewer opens the password-modal pattern (it has a password
+    // field, which window.prompt() can't mask) — see sendTool.
+    'list_users',
+    'system_audit_logs',
+    'disable_reviewer',
+    'enable_reviewer',
+    'manage_roles',
+    'create_reviewer',
   ]),
 };
 
@@ -445,6 +507,8 @@ const TOOL_ARG_PROMPTS: Record<string, { label: string; argKey: string; extraArg
   claim_application:   { label: 'Application ID to claim:',                          argKey: 'applicationId' },
   get_audit_trail:     { label: 'Application ID to view the audit trail for:',        argKey: 'entityId', extraArgs: { entity: 'KycApplication' } },
   forgot_password:     { label: 'Email address to send the password reset link to:',  argKey: 'email' },
+  disable_reviewer:    { label: 'User ID to disable:',                                argKey: 'targetUserId' },
+  enable_reviewer:     { label: 'User ID to re-enable:',                              argKey: 'targetUserId' },
 };
 
 // ── Agent message content (routing vs tool result vs plain text) ───────────────
@@ -452,7 +516,53 @@ const TOOL_ARG_PROMPTS: Record<string, { label: string; argKey: string; extraArg
 function AgentContent({ msg, onTool, allowedTools, appLoading }: { msg: Message; onTool: (tool: string) => void; allowedTools: Set<string>; appLoading: boolean }) {
   const { parsed, raw } = msg;
 
-  // Routing response — orchestrator didn't execute a tool, just identified the agent
+  // Tool-discovery response — no single domain clearly matched (generic
+  // greeting, "help", empty input, or a tie between domains), so the
+  // backend returned every tool the role can access, grouped by domain,
+  // instead of guessing one agent. allowedTools filters again client-side
+  // as defense-in-depth, but TOOL_ROLE_ACCESS server-side is what actually
+  // enforces this — this never shows a tool the backend wouldn't run.
+  if (parsed && Array.isArray(parsed.toolGroups)) {
+    const groups = (parsed.toolGroups as { domain: string; label: string; tools: ToolOption[] }[])
+      .map(g => ({ ...g, tools: g.tools.filter(t => allowedTools.has(t.name)) }))
+      .filter(g => g.tools.length > 0);
+    return (
+      <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tl-sm bg-gray-50 border border-gray-100 space-y-3">
+        <p className="text-sm text-gray-700">
+          {String(parsed.message ?? "Here's everything you can do:")}
+        </p>
+        {groups.map(g => (
+          <div key={g.domain}>
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
+              <Wrench className="w-3 h-3" />
+              {g.label}
+            </p>
+            <div className="flex flex-wrap gap-1.5 mb-1">
+              {g.tools.map(t => (
+                <button
+                  key={t.name}
+                  type="button"
+                  onClick={() => !appLoading && onTool(t.name)}
+                  disabled={appLoading}
+                  className={cn(
+                    'px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-medium transition-all',
+                    appLoading
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'hover:bg-brand-navy/15 active:scale-95 cursor-pointer',
+                  )}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Routing response — orchestrator identified one specific agent for a
+  // clear-intent message (e.g. "change my password" → auth agent only).
   if (parsed && Array.isArray(parsed.availableTools)) {
     const safeTools = (parsed.availableTools as ToolOption[]).filter(t => allowedTools.has(t.name));
     return (

@@ -119,23 +119,45 @@ function scoreMessage(message: string, patterns: RegExp[]): number {
   return patterns.reduce((n, re) => n + (re.test(message) ? 1 : 0), 0);
 }
 
-function inferAgent(message: string, role?: string): 'auth' | 'kyc' | 'members' {
+// 'discovery' = no single domain clearly matched (generic greeting, "help",
+// empty input, or a message that ties equally across domains) — the caller
+// should see every tool their role can access, grouped by domain, rather
+// than a guessed single agent. Replaces the old role-biased default (which
+// silently picked 'kyc' or 'members' for ambiguous input) with an honest
+// "I don't know which one you meant" response.
+function inferAgent(message: string): 'auth' | 'kyc' | 'members' | 'discovery' {
   const authScore    = scoreMessage(message, AUTH_PATTERNS);
   const kycScore     = scoreMessage(message, KYC_PATTERNS);
   const membersScore = scoreMessage(message, MEMBERS_PATTERNS);
 
-  // Role-aware default for ambiguous/unmatched messages. REVIEWER and ADMIN
-  // have zero overlap with kyc-agent tools (see TOOLS_BY_ROLE in
-  // AgentChat.tsx) — defaulting them to 'kyc' left them with a routing
-  // message and no matching action buttons to click.
-  const defaultAgent: 'kyc' | 'members' =
-    role === 'REVIEWER' || role === 'ADMIN' ? 'members' : 'kyc';
+  const maxScore = Math.max(authScore, kycScore, membersScore);
+  if (maxScore === 0) return 'discovery';
 
-  if (authScore === 0 && kycScore === 0 && membersScore === 0) return defaultAgent;
+  const topCount = [authScore, kycScore, membersScore].filter(s => s === maxScore).length;
+  if (topCount > 1) return 'discovery'; // genuine tie — not clearly one domain over another
 
-  if (authScore >= kycScore && authScore >= membersScore) return 'auth';
-  if (kycScore === membersScore) return defaultAgent;
-  return kycScore > membersScore ? 'kyc' : 'members';
+  if (authScore === maxScore) return 'auth';
+  return kycScore === maxScore ? 'kyc' : 'members';
+}
+
+// ── Tool discovery — all tools the role can access, grouped by domain ────────
+
+const DOMAIN_LABELS = { auth: 'AUTHENTICATION', kyc: 'KYC', members: 'MEMBERS' } as const;
+
+function buildDiscoveryGroups(role: string | undefined) {
+  const groups: { domain: keyof typeof DOMAIN_LABELS; label: string; tools: { name: string; label: string }[] }[] = [];
+  for (const [domain, names] of [
+    ['auth',    AUTH_TOOL_NAMES]    as const,
+    ['kyc',     KYC_TOOL_NAMES]     as const,
+    ['members', MEMBERS_TOOL_NAMES] as const,
+  ]) {
+    const tools = toToolOptions(names, role);
+    // Omitting empty groups is what keeps this aligned with
+    // TOOL_ROLE_ACCESS — e.g. APPLICANT's members group is always empty
+    // (no members tool is ever allowed for APPLICANT) and so never appears.
+    if (tools.length > 0) groups.push({ domain, label: DOMAIN_LABELS[domain], tools });
+  }
+  return groups;
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -167,7 +189,21 @@ export async function runOrchestrator(
   }
 
   // 2. Natural language — keyword routing
-  const agent = inferAgent(message, args.role);
+  const agent = inferAgent(message);
+
+  if (agent === 'discovery') {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          agent: 'discovery',
+          message: 'Here\'s everything you can do — click any action below, or type a specific request.',
+          toolGroups: buildDiscoveryGroups(args.role),
+        }),
+      }],
+    };
+  }
+
   return {
     content: [{
       type: 'text',
