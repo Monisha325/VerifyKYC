@@ -288,9 +288,15 @@ export async function forgotPassword(
 export async function resetPassword(
   dto: ResetPasswordDto,
 ): Promise<{ message: string }> {
+  // A valid JWT never legitimately contains whitespace — strip all of it
+  // (not just leading/trailing) defensively, since the token is long enough
+  // that users copy-paste it from an email, and some email clients turn the
+  // email's CSS word-wrapping into real embedded newlines/spaces on copy.
+  const cleanToken = dto.resetToken.replace(/\s+/g, '');
+
   let userId: string;
   try {
-    userId = verifyPasswordResetToken(dto.resetToken).sub;
+    userId = verifyPasswordResetToken(cleanToken).sub;
   } catch {
     throw new AppError(401, 'Invalid or expired reset token');
   }

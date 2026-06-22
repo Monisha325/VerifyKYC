@@ -311,8 +311,13 @@ function PasswordModal({
       if (!currentPassword) { setError('Current password is required.'); return; }
       onSubmit({ currentPassword, newPassword });
     } else {
-      if (!resetToken.trim()) { setError('Reset token is required.'); return; }
-      onSubmit({ resetToken: resetToken.trim(), newPassword });
+      // The token is long enough that users copy-paste it from an email —
+      // strip all whitespace, not just leading/trailing, since some email
+      // clients turn the email's CSS word-wrapping into real embedded
+      // newlines/spaces on copy. A valid JWT never legitimately contains any.
+      const cleanToken = resetToken.replace(/\s+/g, '');
+      if (!cleanToken) { setError('Reset token is required.'); return; }
+      onSubmit({ resetToken: cleanToken, newPassword });
     }
   }
 
