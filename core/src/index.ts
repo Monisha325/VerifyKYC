@@ -82,6 +82,41 @@ app.get('/health', async (_req, res) => {
   });
 });
 
+// ── TEMPORARY diagnostic — remove after the isActive/P2022 investigation ─────
+// Proves which actual database/host the running app is connected to at
+// request time, and whether users.isActive really exists there — without
+// exposing credentials (only host:port + database name from each URL, never
+// the full connection string).
+function sanitizeUrl(raw: string | undefined): { host: string; database: string } | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return { host: u.host, database: u.pathname.replace(/^\//, '') };
+  } catch {
+    return { host: 'unparseable', database: 'unparseable' };
+  }
+}
+
+app.get('/debug/db-info', async (_req, res) => {
+  try {
+    const [dbInfo] = await prisma.$queryRaw<{ current_database: string; current_schema: string }[]>`
+      SELECT current_database(), current_schema()
+    `;
+    const columns = await prisma.$queryRaw<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns WHERE table_name = 'users'
+    `;
+    res.json({
+      runtime_connection: dbInfo,
+      runtime_host_from_DATABASE_URL: sanitizeUrl(process.env.DATABASE_URL),
+      runtime_host_from_DIRECT_URL:   sanitizeUrl(process.env.DIRECT_URL),
+      users_table_columns: columns.map(c => c.column_name),
+      isActive_present: columns.some(c => c.column_name === 'isActive'),
+    });
+  } catch (e: unknown) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
 app.get('/api/v1/ping', (_req, res) => res.json({ pong: true }));
 
 app.use('/api/v1/auth', authRoutes);
