@@ -13,7 +13,6 @@ import {
   changePassword as changePasswordService,
   updateProfile  as updateProfileService,
 } from '../modules/auth/auth.service';
-import { verifyAccessToken } from '../lib/token.service';
 import { prisma } from '../utils/prisma';
 
 // auth.service functions that issue tokens call res.cookie() to set the refresh
@@ -90,11 +89,15 @@ export const authTools: Record<string, (args: Record<string, unknown>) => Promis
   },
 
   get_current_user: async (args) => {
-    const { accessToken } = args as { accessToken: string };
+    // userId is auto-injected from the already-verified session
+    // (agent.router.ts, from req.user.sub) — the caller reached /agent/chat
+    // by passing requireAuth, so re-deriving identity from a second raw JWT
+    // here was both redundant and unreachable (nothing ever supplied one),
+    // which is exactly what produced "jwt must be provided".
+    const { userId } = args as { userId: string };
     try {
-      const payload = verifyAccessToken(accessToken);
       const user = await prisma.user.findUniqueOrThrow({
-        where:  { id: payload.sub },
+        where:  { id: userId },
         select: { id: true, email: true, fullName: true, role: true, isVerified: true, emailVerified: true, createdAt: true },
       });
       return text(user);
@@ -198,9 +201,9 @@ authAgent.tool(
 
 authAgent.tool(
   'get_current_user',
-  'Verify an access token and return the full user profile.',
+  'Return the full profile for the given userId.',
   {
-    accessToken: z.string(),
+    userId: z.string(),
   },
   (args) => authTools.get_current_user(args),
 );
