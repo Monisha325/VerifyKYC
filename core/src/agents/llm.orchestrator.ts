@@ -18,12 +18,33 @@
 // way it would for a forged direct API call. Hiding tools from the model
 // would only be a UX nicety layered on top, never the enforcement itself.
 
-import { GoogleGenAI, type Content, type Part, type FunctionDeclaration } from '@google/genai';
+import { GoogleGenAI, ApiError, type Content, type Part, type FunctionDeclaration, type GenerateContentParameters, type GenerateContentResponse } from '@google/genai';
 import { LLM_TOOL_DEFS } from './llm.registry';
 import { dispatchTool, type ToolResult } from './tool.dispatch';
 
 const MODEL           = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const MAX_TOOL_ROUNDS = 6; // safety cap against runaway multi-step chains
+
+// Gemini's free tier returns 503 ("model overloaded") and 429 ("quota
+// exceeded") fairly often under real load — both are transient, and a
+// short retry clears most of them without the user ever seeing an error.
+const RETRYABLE_STATUS = new Set([429, 503]);
+const MAX_RETRIES      = 2;
+const RETRY_DELAY_MS   = 1500;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function generateWithRetry(client: GoogleGenAI, params: GenerateContentParameters): Promise<GenerateContentResponse> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await client.models.generateContent(params);
+    } catch (e: unknown) {
+      const status = e instanceof ApiError ? e.status : undefined;
+      if (attempt >= MAX_RETRIES || !status || !RETRYABLE_STATUS.has(status)) throw e;
+      await sleep(RETRY_DELAY_MS * (attempt + 1));
+    }
+  }
+}
 
 let _client: GoogleGenAI | null = null;
 function getClient(): GoogleGenAI | null {
@@ -74,9 +95,9 @@ export async function runLlmAgent(
   const contents: Content[] = [{ role: 'user', parts: [{ text: message }] }];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    let response;
+    let response: GenerateContentResponse;
     try {
-      response = await client.models.generateContent({
+      response = await generateWithRetry(client, {
         model: MODEL,
         contents,
         config: {
@@ -85,10 +106,11 @@ export async function runLlmAgent(
         },
       });
     } catch (e: unknown) {
-      return {
-        content: [{ type: 'text', text: `Assistant temporarily unavailable: ${e instanceof Error ? e.message : String(e)}` }],
-        isError: true,
-      };
+      const status = e instanceof ApiError ? e.status : undefined;
+      const text = status && RETRYABLE_STATUS.has(status)
+        ? "The assistant is under heavy load right now and couldn't respond after a few retries. Please try again in a moment."
+        : `Assistant temporarily unavailable: ${e instanceof Error ? e.message : String(e)}`;
+      return { content: [{ type: 'text', text }], isError: true };
     }
 
     const candidateParts = response.candidates?.[0]?.content?.parts ?? [];
