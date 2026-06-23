@@ -58,6 +58,14 @@ services:
         sync: false
       - key: BREVO_FROM_EMAIL
         sync: false
+      # Google Gemini — powers the conversational Agent Chat layer (set in
+      # dashboard). Without this, free-text chat messages return a clear
+      # "not configured" error; exact tool-name calls (e.g. the password
+      # modal) are unaffected.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
 
   # AI service (Python/FastAPI) — moved here from Railway (trial expired).
   # Heavy ML libs (torch/tensorflow/deepface/easyocr) load lazily on first use

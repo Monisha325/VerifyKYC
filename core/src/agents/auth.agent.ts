@@ -135,116 +135,88 @@ export const authTools: Record<string, (args: Record<string, unknown>) => Promis
   },
 };
 
+// ── Tool definitions — single source of truth for name/description/schema ────
+// Shared by the MCP server below and the LLM tool registry (llm.registry.ts).
+// Defining each tool twice (once for MCP, once for the LLM) was the thing
+// the upgrade spec explicitly said to avoid — this loop-registers MCP from
+// the same object the LLM layer imports.
+
+export const AUTH_TOOL_DEFS: Record<string, { description: string; schema: Record<string, z.ZodTypeAny> }> = {
+  register_user: {
+    description: 'Register a new user account. Returns a confirmation message. A 6-digit OTP is sent to the email address for verification.',
+    schema: {
+      email:    z.string().email(),
+      password: z.string().min(8).max(128),
+      fullName: z.string().min(2).max(100),
+      phone:    z.string().optional(),
+    },
+  },
+  login_user: {
+    description: 'Authenticate with email and password. Returns accessToken, user profile, and refreshToken.',
+    schema: {
+      email:    z.string().email(),
+      password: z.string(),
+    },
+  },
+  verify_email: {
+    description: 'Verify a newly registered email address using the 6-digit OTP. Returns accessToken, user profile, and refreshToken.',
+    schema: {
+      email: z.string().email(),
+      otp:   z.string().length(6).regex(/^\d{6}$/),
+    },
+  },
+  resend_otp: {
+    description: 'Resend the email verification OTP to the given address.',
+    schema: { email: z.string().email() },
+  },
+  refresh_token: {
+    description: 'Rotate a refresh token. The old token is immediately revoked. Returns a new accessToken and a new refreshToken.',
+    schema: { refreshToken: z.string() },
+  },
+  logout: {
+    description: 'Revoke a refresh token and end the session. Both refreshToken and actorId are optional — passing neither still clears the session client-side.',
+    schema: {
+      refreshToken: z.string().optional(),
+      actorId:      z.string().optional(),
+    },
+  },
+  get_current_user: {
+    description: 'Return the full profile for the given userId.',
+    schema: { userId: z.string() },
+  },
+  forgot_password: {
+    description: 'Request a password reset. Always returns a generic confirmation message regardless of whether the email exists, to avoid leaking account existence. If the email is registered, a reset token is emailed.',
+    schema: { email: z.string().email() },
+  },
+  reset_password: {
+    description: 'Reset a password using the token emailed by forgot_password. Expires after 30 minutes. Revokes all existing sessions for the account.',
+    schema: {
+      resetToken:  z.string(),
+      newPassword: z.string().min(8).max(128),
+    },
+  },
+  change_password: {
+    description: 'Change the password for the currently authenticated user. Requires the current password. Revokes all existing sessions, including the current one — the caller must log in again afterward.',
+    schema: {
+      userId:          z.string(),
+      currentPassword: z.string(),
+      newPassword:     z.string().min(8).max(128),
+    },
+  },
+  update_profile: {
+    description: "Update the current user's fullName and/or phone. Both fields are optional — only the ones provided are changed.",
+    schema: {
+      userId:   z.string(),
+      fullName: z.string().min(2).max(100).optional(),
+      phone:    z.string().optional(),
+    },
+  },
+};
+
 // ── MCP server — delegates to authTools so each handler is reachable directly ──
 
 export const authAgent = new McpServer({ name: 'auth-agent', version: '1.0.0' });
 
-authAgent.tool(
-  'register_user',
-  'Register a new user account. Returns a confirmation message. A 6-digit OTP is sent to the email address for verification.',
-  {
-    email:    z.string().email(),
-    password: z.string().min(8).max(128),
-    fullName: z.string().min(2).max(100),
-    phone:    z.string().optional(),
-  },
-  (args) => authTools.register_user(args),
-);
-
-authAgent.tool(
-  'login_user',
-  'Authenticate with email and password. Returns accessToken, user profile, and refreshToken.',
-  {
-    email:    z.string().email(),
-    password: z.string(),
-  },
-  (args) => authTools.login_user(args),
-);
-
-authAgent.tool(
-  'verify_email',
-  'Verify a newly registered email address using the 6-digit OTP. Returns accessToken, user profile, and refreshToken.',
-  {
-    email: z.string().email(),
-    otp:   z.string().length(6).regex(/^\d{6}$/),
-  },
-  (args) => authTools.verify_email(args),
-);
-
-authAgent.tool(
-  'resend_otp',
-  'Resend the email verification OTP to the given address.',
-  {
-    email: z.string().email(),
-  },
-  (args) => authTools.resend_otp(args),
-);
-
-authAgent.tool(
-  'refresh_token',
-  'Rotate a refresh token. The old token is immediately revoked. Returns a new accessToken and a new refreshToken.',
-  {
-    refreshToken: z.string(),
-  },
-  (args) => authTools.refresh_token(args),
-);
-
-authAgent.tool(
-  'logout',
-  'Revoke a refresh token and end the session. Both refreshToken and actorId are optional — passing neither still clears the session client-side.',
-  {
-    refreshToken: z.string().optional(),
-    actorId:      z.string().optional(),
-  },
-  (args) => authTools.logout(args),
-);
-
-authAgent.tool(
-  'get_current_user',
-  'Return the full profile for the given userId.',
-  {
-    userId: z.string(),
-  },
-  (args) => authTools.get_current_user(args),
-);
-
-authAgent.tool(
-  'forgot_password',
-  'Request a password reset. Always returns a generic confirmation message regardless of whether the email exists, to avoid leaking account existence. If the email is registered, a reset token is emailed.',
-  {
-    email: z.string().email(),
-  },
-  (args) => authTools.forgot_password(args),
-);
-
-authAgent.tool(
-  'reset_password',
-  'Reset a password using the token emailed by forgot_password. Expires after 30 minutes. Revokes all existing sessions for the account.',
-  {
-    resetToken:  z.string(),
-    newPassword: z.string().min(8).max(128),
-  },
-  (args) => authTools.reset_password(args),
-);
-
-authAgent.tool(
-  'change_password',
-  'Change the password for the currently authenticated user. Requires the current password. Revokes all existing sessions, including the current one — the caller must log in again afterward.',
-  {
-    userId:          z.string(),
-    currentPassword: z.string(),
-    newPassword:     z.string().min(8).max(128),
-  },
-  (args) => authTools.change_password(args),
-);
-
-authAgent.tool(
-  'update_profile',
-  'Update the current user\'s fullName and/or phone. Both fields are optional — only the ones provided are changed.',
-  {
-    userId:   z.string(),
-    fullName: z.string().min(2).max(100).optional(),
-    phone:    z.string().optional(),
-  },
-  (args) => authTools.update_profile(args),
-);
+for (const [name, def] of Object.entries(AUTH_TOOL_DEFS)) {
+  authAgent.tool(name, def.description, def.schema, (args) => authTools[name]!(args));
+}

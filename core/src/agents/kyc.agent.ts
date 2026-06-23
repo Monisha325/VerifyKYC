@@ -144,93 +144,77 @@ export const kycTools: Record<string, (args: Record<string, unknown>) => Promise
   },
 };
 
+// ── Tool definitions — single source of truth for name/description/schema ────
+// Shared by the MCP server below and the LLM tool registry (llm.registry.ts).
+
+export const KYC_TOOL_DEFS: Record<string, { description: string; schema: Record<string, z.ZodTypeAny> }> = {
+  create_application: {
+    description: 'Create a new DRAFT KYC application for a user. Fails with 409 if the user already has an active (DRAFT/SUBMITTED/PROCESSING/PENDING_REVIEW) application.',
+    schema: { userId: z.string() },
+  },
+  get_upload_params: {
+    description: 'Generate signed Cloudinary upload parameters for a document kind on a DRAFT application. The caller uploads directly to Cloudinary using these params, then calls register_document with the returned publicId and secureUrl.',
+    schema: {
+      applicationId: z.string(),
+      userId:        z.string(),
+      documentKind:  DocKindEnum,
+    },
+  },
+  register_document: {
+    description: 'Register an already-uploaded Cloudinary document against a DRAFT application. publicId is the Cloudinary public_id; secureUrl is the full res.cloudinary.com delivery URL; sha256 is the 64-char lowercase hex digest of the original file. Re-registering the same kind replaces the previous upload.',
+    schema: {
+      applicationId: z.string(),
+      userId:        z.string(),
+      documentKind:  DocKindEnum,
+      publicId:      z.string().min(1),
+      secureUrl:     z.string().url().regex(/^https:\/\/res\.cloudinary\.com\//),
+      sha256:        z.string().regex(/^[a-f0-9]{64}$/),
+    },
+  },
+  submit_application: {
+    description: 'Submit a DRAFT application (validates, DRAFT → SUBMITTED) and enqueue the AI verification pipeline asynchronously. Returns immediately with { applicationId, status: "PROCESSING" } — poll get_application_status to track progress.',
+    schema: {
+      applicationId: z.string(),
+      userId:        z.string(),
+    },
+  },
+  get_application_status: {
+    description: "Lightweight status poll for a submitted application. Returns { id, status, overallScore, scoreBand, submittedAt, updatedAt }. Poll this after submit_application until status is PENDING_REVIEW. If applicationId is omitted, looks up the user's most recent application automatically.",
+    schema: {
+      applicationId: z.string().optional(),
+      userId:        z.string(),
+      role:          z.string().optional(),
+    },
+  },
+  get_application: {
+    description: "Fetch the full application record including documents (with AI verification results) and the latest review decision. APPLICANTs can only access their own; REVIEWER and ADMIN can access any. If applicationId is omitted, looks up the user's most recent application automatically.",
+    schema: {
+      applicationId: z.string().optional(),
+      userId:        z.string(),
+      role:          z.string().optional(),
+    },
+  },
+  get_document: {
+    description: 'Fetch a single document with its extracted fields and AI verification results. APPLICANTs can only access documents from their own application; REVIEWER and ADMIN can access any.',
+    schema: {
+      documentId: z.string(),
+      userId:     z.string(),
+      role:       z.string(),
+    },
+  },
+  cancel_application: {
+    description: 'Supersede a REJECTED application so the user can re-apply. Only REJECTED applications can be cancelled — DRAFT/SUBMITTED/PROCESSING will return 400.',
+    schema: {
+      userId:        z.string(),
+      applicationId: z.string(),
+    },
+  },
+};
+
 // ── MCP server — delegates to kycTools so each handler is reachable directly ───
 
 export const kycAgent = new McpServer({ name: 'kyc-agent', version: '1.0.0' });
 
-kycAgent.tool(
-  'create_application',
-  'Create a new DRAFT KYC application for a user. Fails with 409 if the user already has an active (DRAFT/SUBMITTED/PROCESSING/PENDING_REVIEW) application.',
-  {
-    userId: z.string(),
-  },
-  (args) => kycTools.create_application(args),
-);
-
-kycAgent.tool(
-  'get_upload_params',
-  'Generate signed Cloudinary upload parameters for a document kind on a DRAFT application. The caller uploads directly to Cloudinary using these params, then calls register_document with the returned publicId and secureUrl.',
-  {
-    applicationId: z.string(),
-    userId:        z.string(),
-    documentKind:  DocKindEnum,
-  },
-  (args) => kycTools.get_upload_params(args),
-);
-
-kycAgent.tool(
-  'register_document',
-  'Register an already-uploaded Cloudinary document against a DRAFT application. publicId is the Cloudinary public_id; secureUrl is the full res.cloudinary.com delivery URL; sha256 is the 64-char lowercase hex digest of the original file. Re-registering the same kind replaces the previous upload.',
-  {
-    applicationId: z.string(),
-    userId:        z.string(),
-    documentKind:  DocKindEnum,
-    publicId:      z.string().min(1),
-    secureUrl:     z.string().url().regex(/^https:\/\/res\.cloudinary\.com\//),
-    sha256:        z.string().regex(/^[a-f0-9]{64}$/),
-  },
-  (args) => kycTools.register_document(args),
-);
-
-kycAgent.tool(
-  'submit_application',
-  'Submit a DRAFT application (validates, DRAFT → SUBMITTED) and enqueue the AI verification pipeline asynchronously. Returns immediately with { applicationId, status: "PROCESSING" } — poll get_application_status to track progress.',
-  {
-    applicationId: z.string(),
-    userId:        z.string(),
-  },
-  (args) => kycTools.submit_application(args),
-);
-
-kycAgent.tool(
-  'get_application_status',
-  'Lightweight status poll for a submitted application. Returns { id, status, overallScore, scoreBand, submittedAt, updatedAt }. Poll this after submit_application until status is PENDING_REVIEW. If applicationId is omitted, looks up the user\'s most recent application automatically.',
-  {
-    applicationId: z.string().optional(),
-    userId:        z.string(),
-    role:          z.string().optional(),
-  },
-  (args) => kycTools.get_application_status(args),
-);
-
-kycAgent.tool(
-  'get_application',
-  'Fetch the full application record including documents (with AI verification results) and the latest review decision. APPLICANTs can only access their own; REVIEWER and ADMIN can access any. If applicationId is omitted, looks up the user\'s most recent application automatically.',
-  {
-    applicationId: z.string().optional(),
-    userId:        z.string(),
-    role:          z.string().optional(),
-  },
-  (args) => kycTools.get_application(args),
-);
-
-kycAgent.tool(
-  'get_document',
-  'Fetch a single document with its extracted fields and AI verification results. APPLICANTs can only access documents from their own application; REVIEWER and ADMIN can access any.',
-  {
-    documentId: z.string(),
-    userId:     z.string(),
-    role:       z.string(),
-  },
-  (args) => kycTools.get_document(args),
-);
-
-kycAgent.tool(
-  'cancel_application',
-  'Supersede a REJECTED application so the user can re-apply. Only REJECTED applications can be cancelled — DRAFT/SUBMITTED/PROCESSING will return 400.',
-  {
-    userId:        z.string(),
-    applicationId: z.string(),
-  },
-  (args) => kycTools.cancel_application(args),
-);
+for (const [name, def] of Object.entries(KYC_TOOL_DEFS)) {
+  kycAgent.tool(name, def.description, def.schema, (args) => kycTools[name]!(args));
+}

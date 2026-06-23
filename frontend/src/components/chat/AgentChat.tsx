@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Send, Loader2, Bot, User, AlertCircle, Wrench, X } from 'lucide-react';
+import { Send, Loader2, Bot, User, AlertCircle, X, Wrench } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { useApplication } from '@/context/ApplicationContext';
@@ -10,16 +10,9 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import { cn } from '@/lib/utils';
 
-interface ToolOption {
-  name:  string;
-  label: string;
-}
-
 interface AgentResponse {
-  agent?: string;
   content: Array<{ type: string; text: string }>;
   isError?: boolean;
-  availableTools?: ToolOption[];
 }
 
 interface Message {
@@ -32,8 +25,7 @@ interface Message {
 
 export default function AgentChat() {
   const { user } = useAuth();
-  const { app, loading: appLoading } = useApplication();
-  const currentApplicationId = app?.id ?? null;
+  const { loading: appLoading } = useApplication();
   const allowedTools = TOOLS_BY_ROLE[user?.role ?? 'APPLICANT'] ?? TOOLS_BY_ROLE.APPLICANT;
   const [messages, setMessages] = useState<Message[]>([{
     id: 'welcome',
@@ -45,7 +37,6 @@ export default function AgentChat() {
   const [passwordModalTool, setPasswordModalTool] = useState<'change_password' | 'create_reviewer' | null>(null);
   const bottomRef       = useRef<HTMLDivElement>(null);
   const textareaRef     = useRef<HTMLTextAreaElement>(null);
-  const discoveryFired  = useRef(false); // guards against React StrictMode's double-invoked mount effect in dev
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -86,33 +77,9 @@ export default function AgentChat() {
   }
 
   async function sendPayload(body: Record<string, unknown>, displayText: string) {
-    // For tool calls, merge known context into args so pills work without manual input.
-    // Explicit args always win over injected context.
-    let payload = body;
-    if (body.tool) {
-      const tool = body.tool as string;
-      const explicitArgs = (body.args as Record<string, unknown>) ?? {};
-      const contextArgs: Record<string, unknown> = {
-        ...(currentApplicationId && { applicationId: currentApplicationId }),
-        ...explicitArgs,
-      };
-      payload = { tool, args: contextArgs };
-    }
-
     setMessages(prev => [...prev, { id: `u-${Date.now()}`, role: 'user', raw: displayText }]);
-    await fetchAndAppend(payload);
+    await fetchAndAppend(body);
   }
-
-  // Role-aware tool discovery, shown automatically on first load (per the
-  // "welcome dashboard" requirement) without the user needing to type
-  // anything — an empty message has no domain-pattern matches, so the
-  // backend's inferAgent() naturally returns 'discovery'.
-  useEffect(() => {
-    if (discoveryFired.current) return;
-    discoveryFired.current = true;
-    fetchAndAppend({ message: '' });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   async function send() {
     const text = input.trim();
@@ -121,6 +88,10 @@ export default function AgentChat() {
     await sendPayload({ message: text }, text);
   }
 
+  // Path A: direct tool execution via a button click — bypasses the LLM
+  // entirely, goes straight to the orchestrator via sendPayload's exact
+  // {tool, args} shape. Path B (the textarea → send()) goes through the LLM
+  // instead. Both end up at the same dispatchTool() on the backend.
   async function sendTool(toolName: string) {
     if (loading) return;
 
@@ -157,9 +128,8 @@ export default function AgentChat() {
       return;
     }
 
-    // These tools need one id the chat has no existing context for (there's
-    // no "current application" on the admin chat page the way there is for
-    // an applicant's own application) — prompt for it before calling.
+    // These tools need one id/value the chat has no existing context for —
+    // prompt for it before calling.
     const promptCfg = TOOL_ARG_PROMPTS[toolName];
     if (promptCfg) {
       const value = window.prompt(promptCfg.label)?.trim();
@@ -171,7 +141,7 @@ export default function AgentChat() {
       return;
     }
 
-    await sendPayload({ tool: toolName, args: {} }, toolName);
+    await sendPayload({ tool: toolName, args: {} }, TOOL_LABELS[toolName] ?? toolName);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -195,14 +165,17 @@ export default function AgentChat() {
           {appLoading && <span className="text-xs text-gray-400">Loading context…</span>}
         </div>
         <p className="text-sm text-gray-500 mt-1">
-          Ask a question or give a command — the agent routes to the right tool automatically.
+          Click an action below, or just ask the assistant in plain language — both do the same thing.
         </p>
       </div>
+
+      {/* Quick Actions — Path A: direct tool execution, no LLM involved */}
+      <QuickActions allowedTools={allowedTools} onTool={sendTool} disabled={loading} />
 
       {/* Messages */}
       <Card className="flex-1 min-h-0 overflow-y-auto mb-3" padding={false}>
         <div className="p-4 space-y-4">
-          {messages.map(msg => <Bubble key={msg.id} msg={msg} onTool={sendTool} allowedTools={allowedTools} appLoading={appLoading} />)}
+          {messages.map(msg => <Bubble key={msg.id} msg={msg} />)}
 
           {loading && (
             <div className="flex items-start gap-3">
@@ -256,7 +229,7 @@ export default function AgentChat() {
           onClose={() => setPasswordModalTool(null)}
           onSubmit={async (args) => {
             setPasswordModalTool(null);
-            await sendPayload({ tool: passwordModalTool, args }, passwordModalTool);
+            await sendPayload({ tool: passwordModalTool, args }, TOOL_LABELS[passwordModalTool] ?? passwordModalTool);
           }}
         />
       )}
@@ -264,9 +237,11 @@ export default function AgentChat() {
   );
 }
 
-// ── Password modal — masked input, used for any tool with a password field ───
-// window.prompt() (used for every other tool needing an argument) doesn't mask
-// input, which is fine for an application ID but not for a password.
+// ── Password modal — masked input for the two tools with a password field ───
+// Everything else can go through the conversational textbox and let the LLM
+// pick the tool and arguments — but a password typed into that box would be
+// sent in plaintext as part of the chat message, so these two stay outside
+// the LLM flow entirely and call the tool directly via sendPayload.
 
 function PasswordModal({
   tool, onClose, onSubmit,
@@ -347,6 +322,111 @@ function PasswordModal({
   );
 }
 
+// ── Quick Actions — Path A, direct tool buttons (no LLM involved) ────────────
+// Per-role allowlists, restricted to tools with no better dedicated page —
+// get_review_queue/get_evidence_bundle/claim_application/submit_decision/
+// get_audit_trail are deliberately NOT here: /admin/queue, /admin/[id], and
+// /admin/audit already do those with a richer UI (image previews, score
+// gauges, a real decision form, a search box) than a button ever could.
+// Server-side RBAC (dispatchTool) is what actually enforces this either way
+// — these lists only decide what's worth a button, never what's allowed.
+const TOOLS_BY_ROLE: Record<string, Set<string>> = {
+  APPLICANT: new Set([
+    'create_application',
+    'get_application_status',
+    'get_application',
+    'get_current_user',
+    'forgot_password',
+    'update_profile',
+    'change_password',
+  ]),
+  REVIEWER: new Set([
+    'get_current_user',
+    'forgot_password',
+    'update_profile',
+    'change_password',
+  ]),
+  ADMIN: new Set([
+    'get_current_user',
+    'forgot_password',
+    'update_profile',
+    'change_password',
+    'list_users',
+    'system_audit_logs',
+    'disable_reviewer',
+    'enable_reviewer',
+    'manage_roles',
+    'create_reviewer',
+  ]),
+};
+
+const TOOL_LABELS: Record<string, string> = {
+  get_current_user:       'View my profile',
+  forgot_password:        'Forgot password',
+  update_profile:         'Update my profile',
+  change_password:        'Change password',
+  create_application:     'Start a new KYC application',
+  get_application_status: 'Check my application status',
+  get_application:        'View my full application',
+  list_users:             'List all users',
+  system_audit_logs:      'View system-wide audit log',
+  disable_reviewer:       'Disable a user account',
+  enable_reviewer:        'Enable a user account',
+  manage_roles:           "Change a user's role",
+  create_reviewer:        'Create a reviewer account',
+};
+
+const TOOL_DOMAINS: { label: string; tools: string[] }[] = [
+  { label: 'ACCOUNT', tools: ['get_current_user', 'forgot_password', 'update_profile', 'change_password'] },
+  { label: 'KYC',     tools: ['create_application', 'get_application_status', 'get_application'] },
+  { label: 'ADMIN',   tools: ['list_users', 'system_audit_logs', 'disable_reviewer', 'enable_reviewer', 'manage_roles', 'create_reviewer'] },
+];
+
+// Tools whose one missing argument is collected via a prompt on click,
+// rather than auto-injected context.
+const TOOL_ARG_PROMPTS: Record<string, { label: string; argKey: string; extraArgs?: Record<string, unknown> }> = {
+  forgot_password:  { label: 'Email address to send the password reset link to:', argKey: 'email' },
+  disable_reviewer: { label: 'User ID to disable:',                               argKey: 'targetUserId' },
+  enable_reviewer:  { label: 'User ID to re-enable:',                             argKey: 'targetUserId' },
+};
+
+function QuickActions({ allowedTools, onTool, disabled }: { allowedTools: Set<string>; onTool: (tool: string) => void; disabled: boolean }) {
+  const groups = TOOL_DOMAINS
+    .map(g => ({ ...g, tools: g.tools.filter(t => allowedTools.has(t)) }))
+    .filter(g => g.tools.length > 0);
+
+  if (groups.length === 0) return null;
+
+  return (
+    <Card className="mb-3 flex-shrink-0" padding={false}>
+      <div className="p-3 space-y-2.5">
+        {groups.map(g => (
+          <div key={g.label} className="flex flex-wrap items-center gap-1.5">
+            <span className="flex items-center gap-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider w-16 flex-shrink-0">
+              <Wrench className="w-3 h-3" />
+              {g.label}
+            </span>
+            {g.tools.map(t => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => !disabled && onTool(t)}
+                disabled={disabled}
+                className={cn(
+                  'px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-medium transition-all',
+                  disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-brand-navy/15 active:scale-95 cursor-pointer',
+                )}
+              >
+                {TOOL_LABELS[t] ?? t}
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 // ── Avatars ───────────────────────────────────────────────────────────────────
 
 function BotAvatar() {
@@ -367,7 +447,7 @@ function UserAvatar() {
 
 // ── Message bubble ────────────────────────────────────────────────────────────
 
-function Bubble({ msg, onTool, allowedTools, appLoading }: { msg: Message; onTool: (tool: string) => void; allowedTools: Set<string>; appLoading: boolean }) {
+function Bubble({ msg }: { msg: Message }) {
   if (msg.role === 'user') {
     return (
       <div className="flex items-start gap-3 justify-end">
@@ -406,149 +486,15 @@ function Bubble({ msg, onTool, allowedTools, appLoading }: { msg: Message; onToo
   return (
     <div className="flex items-start gap-3">
       <BotAvatar />
-      <AgentContent msg={msg} onTool={onTool} allowedTools={allowedTools} appLoading={appLoading} />
+      <AgentContent msg={msg} />
     </div>
   );
 }
 
-// Per-role pill allowlists. applicationId is injected automatically for tools that need it.
-const TOOLS_BY_ROLE: Record<string, Set<string>> = {
-  APPLICANT: new Set([
-    'create_application',
-    'get_application_status', // applicationId injected automatically
-    'get_application',        // applicationId injected automatically
-    'get_current_user',
-    'forgot_password',
-    'update_profile',
-    'change_password',
-  ]),
-  // reviewerId/reviewerRole are auto-injected server-side (agent.router.ts),
-  // get_review_queue/get_evidence_bundle/claim_application/submit_decision/
-  // get_audit_trail are deliberately NOT here — /admin/queue, /admin/[id],
-  // and /admin/audit already do these with a better UI (image previews,
-  // score gauges, a real decision form, a search box) than a chat button
-  // prompting for a raw id ever could. Kept only what has no other
-  // interface: profile/password tools, and (ADMIN) user management below.
-  REVIEWER: new Set([
-    'get_current_user',
-    'forgot_password',
-    'update_profile',
-    'change_password',
-  ]),
-  ADMIN: new Set([
-    'get_current_user',
-    'forgot_password',
-    'update_profile',
-    'change_password',
-    // ADMIN-only — list_users/system_audit_logs need no required args (button
-    // works as-is); disable/enable/manage_roles prompt for a targetUserId;
-    // create_reviewer opens the password-modal pattern (it has a password
-    // field, which window.prompt() can't mask) — see sendTool.
-    'list_users',
-    'system_audit_logs',
-    'disable_reviewer',
-    'enable_reviewer',
-    'manage_roles',
-    'create_reviewer',
-  ]),
-};
-
-// Tools whose one missing argument is collected via a prompt on click,
-// rather than auto-injected context.
-const TOOL_ARG_PROMPTS: Record<string, { label: string; argKey: string; extraArgs?: Record<string, unknown> }> = {
-  forgot_password:  { label: 'Email address to send the password reset link to:', argKey: 'email' },
-  disable_reviewer: { label: 'User ID to disable:',                               argKey: 'targetUserId' },
-  enable_reviewer:  { label: 'User ID to re-enable:',                             argKey: 'targetUserId' },
-};
-
 // ── Agent message content (routing vs tool result vs plain text) ───────────────
 
-function AgentContent({ msg, onTool, allowedTools, appLoading }: { msg: Message; onTool: (tool: string) => void; allowedTools: Set<string>; appLoading: boolean }) {
+function AgentContent({ msg }: { msg: Message }) {
   const { parsed, raw } = msg;
-
-  // Tool-discovery response — no single domain clearly matched (generic
-  // greeting, "help", empty input, or a tie between domains), so the
-  // backend returned every tool the role can access, grouped by domain,
-  // instead of guessing one agent. allowedTools filters again client-side
-  // as defense-in-depth, but TOOL_ROLE_ACCESS server-side is what actually
-  // enforces this — this never shows a tool the backend wouldn't run.
-  if (parsed && Array.isArray(parsed.toolGroups)) {
-    const groups = (parsed.toolGroups as { domain: string; label: string; tools: ToolOption[] }[])
-      .map(g => ({ ...g, tools: g.tools.filter(t => allowedTools.has(t.name)) }))
-      .filter(g => g.tools.length > 0);
-    return (
-      <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tl-sm bg-gray-50 border border-gray-100 space-y-3">
-        <p className="text-sm text-gray-700">
-          {String(parsed.message ?? "Here's everything you can do:")}
-        </p>
-        {groups.map(g => (
-          <div key={g.domain}>
-            <p className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-              <Wrench className="w-3 h-3" />
-              {g.label}
-            </p>
-            <div className="flex flex-wrap gap-1.5 mb-1">
-              {g.tools.map(t => (
-                <button
-                  key={t.name}
-                  type="button"
-                  onClick={() => !appLoading && onTool(t.name)}
-                  disabled={appLoading}
-                  className={cn(
-                    'px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-medium transition-all',
-                    appLoading
-                      ? 'opacity-50 cursor-not-allowed'
-                      : 'hover:bg-brand-navy/15 active:scale-95 cursor-pointer',
-                  )}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  // Routing response — orchestrator identified one specific agent for a
-  // clear-intent message (e.g. "change my password" → auth agent only).
-  if (parsed && Array.isArray(parsed.availableTools)) {
-    const safeTools = (parsed.availableTools as ToolOption[]).filter(t => allowedTools.has(t.name));
-    return (
-      <div className="max-w-[85%] px-4 py-3 rounded-2xl rounded-tl-sm bg-gray-50 border border-gray-100 space-y-3">
-        <p className="text-sm text-gray-700">
-          {String(parsed.message ?? 'Routed to agent.')}
-        </p>
-        {safeTools.length > 0 && (
-          <div>
-            <p className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-              <Wrench className="w-3 h-3" />
-              Available actions
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {safeTools.map(t => (
-                <button
-                  key={t.name}
-                  type="button"
-                  onClick={() => !appLoading && onTool(t.name)}
-                  disabled={appLoading}
-                  className={cn(
-                    'px-2.5 py-1 rounded-lg bg-brand-navy/5 text-brand-navy text-xs font-medium transition-all',
-                    appLoading
-                      ? 'opacity-50 cursor-not-allowed'
-                      : 'hover:bg-brand-navy/15 active:scale-95 cursor-pointer',
-                  )}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
 
   // Structured JSON result — pretty-print
   if (parsed && typeof parsed === 'object') {

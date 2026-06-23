@@ -124,119 +124,90 @@ export const membersTools: Record<string, (args: Record<string, unknown>) => Pro
   },
 };
 
+// ── Tool definitions — single source of truth for name/description/schema ────
+// Shared by the MCP server below and the LLM tool registry (llm.registry.ts).
+
+export const MEMBERS_TOOL_DEFS: Record<string, { description: string; schema: Record<string, z.ZodTypeAny> }> = {
+  get_review_queue: {
+    description: 'Return all PENDING_REVIEW applications sorted by risk: FLAGGED band first, then highest flag count, then newest.',
+    schema: {},
+  },
+  get_evidence_bundle: {
+    description: 'Fetch the full evidence bundle for a PENDING_REVIEW application: documents with short-lived signed URLs, extracted fields, fraud flags, identity correlation scores, and prior decisions.',
+    schema: { applicationId: z.string() },
+  },
+  claim_application: {
+    description: 'Claim a PENDING_REVIEW application for review. Idempotent if already claimed by the same reviewer. Throws 409 if claimed by someone else.',
+    schema: {
+      applicationId: z.string(),
+      reviewerId:    z.string(),
+    },
+  },
+  submit_decision: {
+    description: 'Record a reviewer decision on a claimed application. ADMIN can decide without claiming; REVIEWER must claim first. At least one reason code is required.',
+    schema: {
+      applicationId: z.string(),
+      reviewerId:    z.string(),
+      reviewerRole:  z.string(),
+      decision:      z.enum(['APPROVED', 'REJECTED', 'ESCALATED']),
+      reasonCodes:   z.array(z.enum(REASON_CODES)).min(1),
+      notes:         z.string().max(2000).optional(),
+    },
+  },
+  get_audit_trail: {
+    description: 'Return the full audit history for a given entity and entityId (e.g. entity="KycApplication", entityId="<uuid>"), ordered oldest first.',
+    schema: {
+      entity:   z.string(),
+      entityId: z.string(),
+    },
+  },
+  // ── ADMIN-only ──────────────────────────────────────────────────────────────
+  create_reviewer: {
+    description: 'ADMIN-only. Create a new REVIEWER account. Skips email OTP verification — the admin vouches for the email directly. userId is the acting admin (audit trail), auto-filled from the session when called via chat.',
+    schema: {
+      userId:   z.string(),
+      email:    z.string().email(),
+      password: z.string().min(8).max(128),
+      fullName: z.string().min(2).max(100),
+      phone:    z.string().optional(),
+    },
+  },
+  disable_reviewer: {
+    description: 'ADMIN-only. Disable a user account — blocks future logins and immediately revokes any active sessions. userId is the acting admin (audit trail); targetUserId is the account being disabled.',
+    schema: {
+      userId:       z.string(),
+      targetUserId: z.string(),
+    },
+  },
+  enable_reviewer: {
+    description: 'ADMIN-only. Re-enable a previously disabled user account. userId is the acting admin (audit trail); targetUserId is the account being re-enabled.',
+    schema: {
+      userId:       z.string(),
+      targetUserId: z.string(),
+    },
+  },
+  list_users: {
+    description: 'ADMIN-only. List all user accounts, optionally filtered by role (APPLICANT|REVIEWER|ADMIN).',
+    schema: { roleFilter: z.enum(['APPLICANT', 'REVIEWER', 'ADMIN']).optional() },
+  },
+  manage_roles: {
+    description: "ADMIN-only. Change a user's role. userId is the acting admin (audit trail); targetUserId is the account whose role is changing.",
+    schema: {
+      userId:       z.string(),
+      targetUserId: z.string(),
+      newRole:      z.enum(['APPLICANT', 'REVIEWER', 'ADMIN']),
+    },
+  },
+  system_audit_logs: {
+    description: 'ADMIN-only. Return the most recent audit events system-wide (not scoped to one entity), newest first. Default limit 100, max 500.',
+    schema: { limit: z.number().int().positive().max(500).optional() },
+  },
+};
+
 // ── MCP server — delegates to membersTools ─────────────────────────────────────
 
 export const membersAgent = new McpServer({ name: 'members-agent', version: '1.0.0' });
 
-membersAgent.tool(
-  'get_review_queue',
-  'Return all PENDING_REVIEW applications sorted by risk: FLAGGED band first, then highest flag count, then newest.',
-  async () => membersTools.get_review_queue({}),
-);
-
-membersAgent.tool(
-  'get_evidence_bundle',
-  'Fetch the full evidence bundle for a PENDING_REVIEW application: documents with short-lived signed URLs, extracted fields, fraud flags, identity correlation scores, and prior decisions.',
-  {
-    applicationId: z.string(),
-  },
-  (args) => membersTools.get_evidence_bundle(args),
-);
-
-membersAgent.tool(
-  'claim_application',
-  'Claim a PENDING_REVIEW application for review. Idempotent if already claimed by the same reviewer. Throws 409 if claimed by someone else.',
-  {
-    applicationId: z.string(),
-    reviewerId:    z.string(),
-  },
-  (args) => membersTools.claim_application(args),
-);
-
-membersAgent.tool(
-  'submit_decision',
-  'Record a reviewer decision on a claimed application. ADMIN can decide without claiming; REVIEWER must claim first. At least one reason code is required.',
-  {
-    applicationId: z.string(),
-    reviewerId:    z.string(),
-    reviewerRole:  z.string(),
-    decision:      z.enum(['APPROVED', 'REJECTED', 'ESCALATED']),
-    reasonCodes:   z.array(z.enum(REASON_CODES)).min(1),
-    notes:         z.string().max(2000).optional(),
-  },
-  (args) => membersTools.submit_decision(args),
-);
-
-membersAgent.tool(
-  'get_audit_trail',
-  'Return the full audit history for a given entity and entityId (e.g. entity="KycApplication", entityId="<uuid>"), ordered oldest first.',
-  {
-    entity:   z.string(),
-    entityId: z.string(),
-  },
-  (args) => membersTools.get_audit_trail(args),
-);
-
-// ── ADMIN-only tools ───────────────────────────────────────────────────────────
-
-membersAgent.tool(
-  'create_reviewer',
-  'ADMIN-only. Create a new REVIEWER account. Skips email OTP verification — the admin vouches for the email directly. userId is the acting admin (audit trail), auto-filled from the session when called via chat.',
-  {
-    userId:   z.string(),
-    email:    z.string().email(),
-    password: z.string().min(8).max(128),
-    fullName: z.string().min(2).max(100),
-    phone:    z.string().optional(),
-  },
-  (args) => membersTools.create_reviewer(args),
-);
-
-membersAgent.tool(
-  'disable_reviewer',
-  'ADMIN-only. Disable a user account — blocks future logins and immediately revokes any active sessions. userId is the acting admin (audit trail); targetUserId is the account being disabled.',
-  {
-    userId:       z.string(),
-    targetUserId: z.string(),
-  },
-  (args) => membersTools.disable_reviewer(args),
-);
-
-membersAgent.tool(
-  'enable_reviewer',
-  'ADMIN-only. Re-enable a previously disabled user account. userId is the acting admin (audit trail); targetUserId is the account being re-enabled.',
-  {
-    userId:       z.string(),
-    targetUserId: z.string(),
-  },
-  (args) => membersTools.enable_reviewer(args),
-);
-
-membersAgent.tool(
-  'list_users',
-  'ADMIN-only. List all user accounts, optionally filtered by role (APPLICANT|REVIEWER|ADMIN).',
-  {
-    roleFilter: z.enum(['APPLICANT', 'REVIEWER', 'ADMIN']).optional(),
-  },
-  (args) => membersTools.list_users(args),
-);
-
-membersAgent.tool(
-  'manage_roles',
-  'ADMIN-only. Change a user\'s role. userId is the acting admin (audit trail); targetUserId is the account whose role is changing.',
-  {
-    userId:       z.string(),
-    targetUserId: z.string(),
-    newRole:      z.enum(['APPLICANT', 'REVIEWER', 'ADMIN']),
-  },
-  (args) => membersTools.manage_roles(args),
-);
-
-membersAgent.tool(
-  'system_audit_logs',
-  'ADMIN-only. Return the most recent audit events system-wide (not scoped to one entity), newest first. Default limit 100, max 500.',
-  {
-    limit: z.number().int().positive().max(500).optional(),
-  },
-  (args) => membersTools.system_audit_logs(args),
-);
+for (const [name, def] of Object.entries(MEMBERS_TOOL_DEFS)) {
+  membersAgent.tool(name, def.description, def.schema, (args) => membersTools[name]!(args));
+}
