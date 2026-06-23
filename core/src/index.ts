@@ -78,6 +78,8 @@ app.get('/health', async (_req, res) => {
       AI_SERVICE_URL:  process.env.AI_SERVICE_URL || false,
       FRONTEND_ORIGIN: process.env.FRONTEND_ORIGIN || false,
       NODE_ENV:        process.env.NODE_ENV,
+      GEMINI_API_KEY:  !!process.env.GEMINI_API_KEY,
+      GEMINI_MODEL:    process.env.GEMINI_MODEL || false,
     },
   });
 });
