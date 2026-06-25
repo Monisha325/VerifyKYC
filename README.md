@@ -1,5 +1,7 @@
 # VeriKYC — AI-Powered KYC & Identity Verification Platform
 
+**Live:** https://verify-gti01295r-monishapatnana6-5579s-projects.vercel.app
+
 An enterprise-grade digital KYC platform that verifies government-issued identity documents using AI, with mandatory human review oversight. No application is ever auto-approved.
 
 ## Tech Stack
