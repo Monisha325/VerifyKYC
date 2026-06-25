@@ -345,6 +345,11 @@ const TOOLS_BY_ROLE: Record<string, Set<string>> = {
     'forgot_password',
     'update_profile',
     'change_password',
+    'get_review_queue',
+    'get_evidence_bundle',
+    'claim_application',
+    'submit_decision',
+    'get_audit_trail',
   ]),
   ADMIN: new Set([
     'get_current_user',
@@ -368,6 +373,11 @@ const TOOL_LABELS: Record<string, string> = {
   create_application:     'Start a new KYC application',
   get_application_status: 'Check my application status',
   get_application:        'View my full application',
+  get_review_queue:       'Show review queue',
+  get_evidence_bundle:    'View evidence bundle',
+  claim_application:      'Claim application',
+  submit_decision:        'Submit decision',
+  get_audit_trail:        'View audit trail',
   list_users:             'List all users',
   system_audit_logs:      'View system-wide audit log',
   disable_reviewer:       'Disable a user account',
@@ -379,15 +389,20 @@ const TOOL_LABELS: Record<string, string> = {
 const TOOL_DOMAINS: { label: string; tools: string[] }[] = [
   { label: 'ACCOUNT', tools: ['get_current_user', 'forgot_password', 'update_profile', 'change_password'] },
   { label: 'KYC',     tools: ['create_application', 'get_application_status', 'get_application'] },
+  { label: 'REVIEW',  tools: ['get_review_queue', 'get_evidence_bundle', 'claim_application', 'submit_decision', 'get_audit_trail'] },
   { label: 'ADMIN',   tools: ['list_users', 'system_audit_logs', 'disable_reviewer', 'enable_reviewer', 'manage_roles', 'create_reviewer'] },
 ];
 
 // Tools whose one missing argument is collected via a prompt on click,
 // rather than auto-injected context.
 const TOOL_ARG_PROMPTS: Record<string, { label: string; argKey: string; extraArgs?: Record<string, unknown> }> = {
-  forgot_password:  { label: 'Email address to send the password reset link to:', argKey: 'email' },
-  disable_reviewer: { label: 'User ID to disable:',                               argKey: 'targetUserId' },
-  enable_reviewer:  { label: 'User ID to re-enable:',                             argKey: 'targetUserId' },
+  forgot_password:     { label: 'Email address to send the password reset link to:', argKey: 'email' },
+  disable_reviewer:    { label: 'User ID to disable:',                               argKey: 'targetUserId' },
+  enable_reviewer:     { label: 'User ID to re-enable:',                             argKey: 'targetUserId' },
+  get_evidence_bundle: { label: 'Application ID to view evidence for:',              argKey: 'applicationId' },
+  claim_application:   { label: 'Application ID to claim:',                          argKey: 'applicationId' },
+  submit_decision:     { label: 'Application ID to submit a decision for:',          argKey: 'applicationId' },
+  get_audit_trail:     { label: 'Application ID to view audit trail for:',           argKey: 'applicationId' },
 };
 
 function QuickActions({ allowedTools, onTool, disabled }: { allowedTools: Set<string>; onTool: (tool: string) => void; disabled: boolean }) {
