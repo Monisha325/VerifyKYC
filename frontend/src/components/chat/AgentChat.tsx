@@ -387,10 +387,9 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 const TOOL_DOMAINS: { label: string; tools: string[] }[] = [
-  { label: 'ACCOUNT', tools: ['get_current_user', 'forgot_password', 'update_profile', 'change_password'] },
-  { label: 'KYC',     tools: ['create_application', 'get_application_status', 'get_application'] },
-  { label: 'REVIEW',  tools: ['get_review_queue', 'get_evidence_bundle', 'claim_application', 'submit_decision', 'get_audit_trail'] },
-  { label: 'ADMIN',   tools: ['list_users', 'system_audit_logs', 'disable_reviewer', 'enable_reviewer', 'manage_roles', 'create_reviewer'] },
+  { label: 'AUTHENTICATION', tools: ['get_current_user', 'forgot_password', 'update_profile', 'change_password'] },
+  { label: 'KYC AGENT',      tools: ['create_application', 'get_application_status', 'get_application'] },
+  { label: 'MEMBERS',        tools: ['get_review_queue', 'get_evidence_bundle', 'claim_application', 'submit_decision', 'get_audit_trail', 'list_users', 'system_audit_logs', 'disable_reviewer', 'enable_reviewer', 'manage_roles', 'create_reviewer'] },
 ];
 
 // Tools whose one missing argument is collected via a prompt on click,
