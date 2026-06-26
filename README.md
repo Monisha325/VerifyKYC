@@ -15,7 +15,7 @@ An enterprise-grade digital KYC platform that verifies government-issued identit
 | Storage | Cloudinary (signed direct-upload) |
 | Auth | JWT (15 min) + Rotating Refresh Tokens (7 d) |
 | Email | Brevo Transactional Email API |
-| Conversational AI | Google Gemini (`gemini-2.5-flash`) via `@google/genai` |
+| Conversational AI | LangGraph + Claude `claude-sonnet-4-6` (primary); Google Gemini `gemini-2.5-flash` (fallback) |
 | Agent Protocol | Model Context Protocol (MCP) — `@modelcontextprotocol/sdk` |
 | Rate Limiting | `express-rate-limit` backed by Upstash Redis |
 
@@ -34,9 +34,9 @@ browser → Next.js (Vercel) → Express core (Render) → Neon PostgreSQL
 The Agent Chat feature exposes a hybrid interface on top of the KYC platform:
 
 - **Path A (Quick Actions)** — persistent button panel grouped by agent domain. Button clicks send an exact tool name directly to the orchestrator, bypassing the LLM entirely.
-- **Path B (Free-text chat)** — natural language messages are sent to Gemini, which selects and calls tools in a loop (up to 6 rounds) before returning a conversational response.
+- **Path B (Free-text chat)** — natural language messages route through a **LangGraph supervisor + three specialist sub-agents** (Claude `claude-sonnet-4-6`). Each sub-agent runs its own ReAct tool-calling loop. If `ANTHROPIC_API_KEY` is not set, falls back to the Gemini single-loop agent.
 
-Both paths converge at `dispatchTool()` — the single execution and RBAC enforcement point. The LLM can never bypass role checks.
+Both paths converge at `dispatchTool()` in `src/rbac.ts` — the single execution and RBAC enforcement point. The LLM can never bypass role checks.
 
 ### Three Agent Domains
 
@@ -54,6 +54,50 @@ Real MCP servers using `StreamableHTTPServerTransport` (stateless, one transport
 POST /api/v1/mcp/auth
 POST /api/v1/mcp/kyc
 POST /api/v1/mcp/members
+```
+
+## Project Structure
+
+```
+core/src/
+  agent/
+    agents.ts            # Auth + KYC + Members tool implementations + definitions
+    prompts.ts           # LLM system prompt templates
+    supervisor.ts        # LangGraph supervisor graph + Gemini fallback
+    tools.ts             # 30 LangChain tool wrappers
+    reasoning.service.ts # Entry point — routes Path A (tool) and Path B (LLM)
+  mcp/
+    auth.mcp.ts          # MCP server for authentication tools
+    kyc.mcp.ts           # MCP server for KYC tools
+    members.mcp.ts       # MCP server for members/review tools
+  modules/
+    auth/                # Auth controller, router, service, schema, OTP
+    applications/        # Application controller, router, service
+    documents/           # Document controller, router, schema, service
+    review/              # Review controller, schema, service
+    verification/        # AI pipeline: OCR, scoring, face match, fraud detection
+  routes/
+    agent.routes.ts      # MCP endpoints + /agent/chat HTTP handler
+    audit.routes.ts
+    document.routes.ts
+    review.routes.ts
+  services/
+    token.service.ts     # JWT sign/verify + password reset tokens
+  middleware/            # requireAuth, requireRole, errorHandler
+  utils/                 # prisma client, audit helpers
+  rbac.ts                # RBAC + dispatchTool — real enforcement for all tool calls
+  types.d.ts             # Ambient declarations for fuzzball + MCP SDK
+  index.ts               # Express app entry point
+
+frontend/src/
+  app/                   # Next.js App Router pages (auth, protected, admin)
+  components/            # chat/, liveness/, layout/, ui/
+  hooks/                 # useCamera, useFaceDetection, useLivenessStateMachine
+  lib/                   # api, types, upload, utils + liveness utilities
+  context/               # AuthContext, ApplicationContext
+
+ai-service/
+  app/routers/           # FastAPI routers (face match, document OCR, liveness, etc.)
 ```
 
 ## Local Setup
