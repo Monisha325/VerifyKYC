@@ -416,7 +416,7 @@ function QuickActions({ allowedTools, onTool, disabled }: { allowedTools: Set<st
       <div className="p-3 space-y-2.5">
         {groups.map(g => (
           <div key={g.label} className="flex flex-wrap items-center gap-1.5">
-            <span className="flex items-center gap-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider w-16 flex-shrink-0">
+            <span className="flex items-center gap-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider shrink-0 min-w-max">
               <Wrench className="w-3 h-3" />
               {g.label}
             </span>
