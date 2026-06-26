@@ -1,9 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp';
-import { authAgent }    from './auth.agent';
-import { kycAgent }     from './kyc.agent';
-import { membersAgent } from './members.agent';
-import { runOrchestrator, OrchestratorArgs } from './orchestrator';
+import { authAgent }    from '../mcp/auth.mcp';
+import { kycAgent }     from '../mcp/kyc.mcp';
+import { membersAgent } from '../mcp/members.mcp';
+import { runOrchestrator, OrchestratorArgs } from '../agent/reasoning.service';
 import { requireAuth }  from '../middleware/auth.middleware';
 
 const router = Router();
@@ -38,15 +38,10 @@ router.post(
   requireAuth,
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      // The wire format is { message } OR { tool, args: {...} } — that nested
-      // `args` must be unwrapped here. Spreading req.body directly (as this
-      // used to) left a literal `args` *property* sitting alongside the
-      // flattened fields instead of merging its contents, so tool handlers
-      // reading e.g. applicationId off the top level got undefined. Silently
-      // masked for get_application_status/get_application (both fall back
-      // to the user's most recent application when applicationId is
-      // missing) — not masked for claim_application/get_evidence_bundle,
-      // which have no such fallback and crashed instead.
+      // Wire format: { message } OR { tool, args: {...} }
+      // The nested `args` must be unwrapped here — spreading req.body directly
+      // leaves a literal `args` property instead of merging its contents, so
+      // tool handlers reading top-level fields like applicationId get undefined.
       const { message = '', tool, args: bodyArgs } = req.body as {
         message?: string;
         tool?:    string;
@@ -58,17 +53,14 @@ router.post(
         tool,
         userId: req.user?.sub,
         role:   req.user?.role,
-        // Same pattern as userId/role above, under the names members-agent
-        // tools expect — lets claim_application/submit_decision work from a
-        // one-click button without the client needing to know its own id.
         reviewerId:   req.user?.sub,
         reviewerRole: req.user?.role,
       };
 
       const result = await runOrchestrator(message, args);
 
-      // If the tool result carries a refreshToken (auth flows via MCP), promote it
-      // to an HttpOnly cookie so the browser session stays consistent.
+      // If the tool result carries a refreshToken (auth flows via MCP), promote
+      // it to an HttpOnly cookie so the browser session stays consistent.
       if (result.content.length > 0) {
         try {
           const parsed = JSON.parse(result.content[0].text) as Record<string, unknown>;
@@ -84,7 +76,7 @@ router.post(
             result.content[0].text = JSON.stringify(parsed);
           }
         } catch {
-          // content is not JSON (unexpected) — leave it untouched
+          // content is not JSON — leave it untouched
         }
       }
 

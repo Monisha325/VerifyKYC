@@ -1,9 +1,9 @@
-'use client';
+﻿'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Loader2, CheckCircle2, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
-import type { LivenessVerificationResult } from '@/types/liveness';
+import type { LivenessVerificationResult } from '@/lib/types';
 
 // ── Landmark indices (MediaPipe FaceMesh 468-point model) ────────────────────
 const LEFT_EYE_IDX  = [33, 160, 158, 133, 153, 144] as const;

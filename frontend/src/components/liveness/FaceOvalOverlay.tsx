@@ -1,5 +1,5 @@
-'use client';
-import type { LivenessStep, FacePosition } from '@/types/liveness';
+﻿'use client';
+import type { LivenessStep, FacePosition } from '@/lib/types';
 
 interface Props {
   step:         LivenessStep;

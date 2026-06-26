@@ -1,4 +1,4 @@
-import type { LivenessStep, LivenessVerificationResult } from '@/types/liveness';
+import type { LivenessStep, LivenessVerificationResult } from '@/lib/types';
 
 export function selectChallenges(): Array<'blink' | 'smile' | 'mouth_open'> {
   return ['blink', 'smile', 'mouth_open'];

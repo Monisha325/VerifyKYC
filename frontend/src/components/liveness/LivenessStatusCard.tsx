@@ -1,5 +1,5 @@
-'use client';
-import type { LivenessVerificationResult } from '@/types/liveness';
+﻿'use client';
+import type { LivenessVerificationResult } from '@/lib/types';
 
 interface Props {
   result:   LivenessVerificationResult | null;

@@ -1,5 +1,5 @@
-'use client';
-import { getCameraPermissionInstructions } from '@/utils/livenessHelpers';
+﻿'use client';
+import { getCameraPermissionInstructions } from '@/lib/livenessHelpers';
 
 interface Props { onRetry: () => void }
 

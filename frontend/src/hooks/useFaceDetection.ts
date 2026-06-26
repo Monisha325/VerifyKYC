@@ -1,8 +1,8 @@
-'use client';
+﻿'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getFaceApi } from '@/utils/faceApiLoader';
-import { analyzeFacePosition, calculateEAR, calculateMAR, measureBrightness } from '@/utils/canvasUtils';
-import type { FacePosition, LightingResult } from '@/types/liveness';
+import { getFaceApi } from '@/lib/faceApiLoader';
+import { analyzeFacePosition, calculateEAR, calculateMAR, measureBrightness } from '@/lib/canvasUtils';
+import type { FacePosition, LightingResult } from '@/lib/types';
 
 export interface DetectionFrame {
   faceCount:        number;

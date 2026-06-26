@@ -9,7 +9,7 @@ import {
   refreshTokenExpiry,
   signPasswordResetToken,
   verifyPasswordResetToken,
-} from '../../lib/token.service';
+} from '../../services/token.service';
 import {
   generateOtp,
   sendOtpEmail,

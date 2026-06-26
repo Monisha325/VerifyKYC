@@ -1,5 +1,5 @@
-'use client';
-import type { LivenessStep } from '@/types/liveness';
+﻿'use client';
+import type { LivenessStep } from '@/lib/types';
 
 interface Props { confidence: number; step: LivenessStep }
 

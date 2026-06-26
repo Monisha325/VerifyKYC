@@ -29,7 +29,7 @@ import applicationRoutes from './modules/applications/application.router';
 import documentRoutes from './routes/document.routes';
 import reviewRoutes from './routes/review.routes';
 import auditRoutes from './routes/audit.routes';
-import agentRoutes from './agents/agent.router';
+import agentRoutes from './routes/agent.routes';
 
 const app = express();
 app.set('trust proxy', 1);

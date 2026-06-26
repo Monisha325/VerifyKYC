@@ -1,9 +1,9 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState } from 'react';
 import dynamic                          from 'next/dynamic';
 import { useRouter }                    from 'next/navigation';
-import type { LivenessVerificationResult } from '@/types/liveness';
-import { mergeLivenessResult } from '@/utils/livenessHelpers';
+import type { LivenessVerificationResult } from '@/lib/types';
+import { mergeLivenessResult } from '@/lib/livenessHelpers';
 
 const CameraModal       = dynamic(() => import('@/components/liveness/CameraModal'), { ssr: false });
 const LivenessStatusCard = dynamic(() => import('@/components/liveness/LivenessStatusCard'), { ssr: false });

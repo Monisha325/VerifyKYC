@@ -1,7 +1,7 @@
-'use client';
+﻿'use client';
 import { useEffect, useRef, useState } from 'react';
-import { getInstructionForStep } from '@/utils/livenessHelpers';
-import type { LivenessStep } from '@/types/liveness';
+import { getInstructionForStep } from '@/lib/livenessHelpers';
+import type { LivenessStep } from '@/lib/types';
 
 interface Props {
   step:             LivenessStep;

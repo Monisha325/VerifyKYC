@@ -1,6 +1,6 @@
-'use client';
+﻿'use client';
 import { useReducer } from 'react';
-import type { LivenessState, LivenessAction, LivenessStep } from '@/types/liveness';
+import type { LivenessState, LivenessAction, LivenessStep } from '@/lib/types';
 
 const INITIAL_STATE: LivenessState = {
   step:             'idle',

@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { Role } from '@prisma/client';
-import { verifyAccessToken } from '../lib/token.service';
+import { verifyAccessToken } from '../services/token.service';
 import { AppError } from './errorHandler';
 
 declare global {

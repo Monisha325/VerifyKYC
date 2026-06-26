@@ -1,4 +1,4 @@
-import type { FacePosition, LightingResult } from '@/types/liveness';
+import type { FacePosition, LightingResult } from '@/lib/types';
 
 export async function captureFrameFromVideo(
   videoEl: HTMLVideoElement,

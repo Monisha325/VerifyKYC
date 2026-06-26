@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import dynamic          from 'next/dynamic';
 import { useRouter }    from 'next/navigation';
@@ -10,8 +10,8 @@ import {
   Image as ImageIcon, ChevronRight, Sparkles, Camera,
 } from 'lucide-react';
 import { api }   from '@/lib/api';
-import type { LivenessVerificationResult } from '@/types/liveness';
-import { persistedLivenessResult } from '@/utils/livenessHelpers';
+import type { LivenessVerificationResult } from '@/lib/types';
+import { persistedLivenessResult } from '@/lib/livenessHelpers';
 
 const CameraModal = dynamic(() => import('@/components/liveness/CameraModal'), { ssr: false });
 import {
@@ -278,7 +278,7 @@ function SelfieCaptureCard({
   onOpen,
 }: {
   state:          DocUploadState;
-  livenessResult: import('@/types/liveness').LivenessVerificationResult | null;
+  livenessResult: import('@/lib/types').LivenessVerificationResult | null;
   onOpen:         () => void;
 }) {
   const isDone  = state.status === 'done';
