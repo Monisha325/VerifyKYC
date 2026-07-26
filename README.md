@@ -221,6 +221,3 @@ Score bands are **hints for reviewers only** — nothing auto-approves.
 - RBAC enforced at `dispatchTool()` — applies to both button clicks and LLM tool calls
 - Auto-injected session fields (`userId`, `role`) always overwrite LLM-supplied values
 
-## License
-
-Private — All rights reserved.
