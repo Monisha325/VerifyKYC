@@ -39,14 +39,14 @@ VeriKYC is a full-stack digital KYC platform that verifies government-issued ide
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    B[Browser] --> F[Next.js<br/>Vercel]
-    B -. signed direct upload .-> CL[(Cloudinary<br/>images only)]
-    F --> C[Express Core API<br/>Render]
-    C --> DB[(Neon PostgreSQL)]
-    C --> AI[FastAPI AI Service<br/>Render]
-    AI --> CL
+```text
+Browser ──► Next.js Frontend (Vercel) ──► Express Core API (Render) ──► Neon PostgreSQL
+   │                                                  │
+   │                                                  ▼
+   │                                     FastAPI AI Service (Render)
+   │  signed direct upload                            │
+   │                                                  ▼
+   └────────────────────────────────────► Cloudinary (images only)
 ```
 
 Images go straight from the browser to Cloudinary. No image bytes pass through the core API.
@@ -57,19 +57,28 @@ Images go straight from the browser to Cloudinary. No image bytes pass through t
 
 The Agent Chat feature is a hybrid interface with two entry paths that converge on the same guarded executor.
 
-```mermaid
-flowchart TD
-    U[User] --> A["Path A: Quick Actions<br/>exact tool name, no LLM"]
-    U --> B["Path B: Free-text chat"]
-    B --> S["LangGraph Supervisor<br/>Claude, Gemini fallback"]
-    S --> AA[auth-agent]
-    S --> KA[kyc-agent]
-    S --> MA[members-agent]
-    A --> D
-    AA -->|tool call| D
-    KA -->|tool call| D
-    MA -->|tool call| D
-    D["dispatchTool() in rbac.ts<br/>role check + session field injection"] --> T["Tool implementations<br/>Prisma, AI service, audit log"]
+```text
+                               User
+                ┌────────────────┴────────────────┐
+                ▼                                 ▼
+      Path A: Quick Actions            Path B: Free-text chat
+    (exact tool name, no LLM)                     │
+                │                                 ▼
+                │                       LangGraph Supervisor
+                │                     (Claude, Gemini fallback)
+                │                   ┌─────────────┬─────────────┐
+                │                   ▼             ▼             ▼
+                │              auth-agent     kyc-agent   members-agent
+                │                   │             │             │
+                └───────────────────┴─────────────┼─────────────┘
+                                                  ▼
+                            ┌───────────────────────────────────────────┐
+                            │ dispatchTool()  (core/src/rbac.ts)        │
+                            │ role check + session field injection      │
+                            └─────────────────────┬─────────────────────┘
+                                                  ▼
+                                        Tool implementations
+                                   (Prisma, AI service, audit log)
 ```
 
 - **Path A (Quick Actions):** a persistent button panel grouped by agent domain. Clicks send an exact tool name straight to the orchestrator and skip the LLM entirely (deterministic, zero token cost).
