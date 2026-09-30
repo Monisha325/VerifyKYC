@@ -40,12 +40,12 @@ VeriKYC is a full-stack digital KYC platform that verifies government-issued ide
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
     B[Browser] --> F[Next.js<br/>Vercel]
+    B -. signed direct upload .-> CL[(Cloudinary<br/>images only)]
     F --> C[Express Core API<br/>Render]
     C --> DB[(Neon PostgreSQL)]
     C --> AI[FastAPI AI Service<br/>Render]
-    F -. signed direct upload .-> CL[(Cloudinary<br/>images only)]
     AI --> CL
 ```
 
@@ -59,15 +59,17 @@ The Agent Chat feature is a hybrid interface with two entry paths that converge 
 
 ```mermaid
 flowchart TD
-    A[Path A: Quick Action buttons<br/>exact tool name] --> D
-    B[Path B: Free-text chat] --> S[LangGraph Supervisor]
+    U[User] --> A["Path A: Quick Actions<br/>exact tool name, no LLM"]
+    U --> B["Path B: Free-text chat"]
+    B --> S["LangGraph Supervisor<br/>Claude, Gemini fallback"]
     S --> AA[auth-agent]
     S --> KA[kyc-agent]
     S --> MA[members-agent]
-    AA --> D
-    KA --> D
-    MA --> D
-    D["dispatchTool()<br/>RBAC enforcement"] --> T[Tool implementations]
+    A --> D
+    AA -->|tool call| D
+    KA -->|tool call| D
+    MA -->|tool call| D
+    D["dispatchTool() in rbac.ts<br/>role check + session field injection"] --> T["Tool implementations<br/>Prisma, AI service, audit log"]
 ```
 
 - **Path A (Quick Actions):** a persistent button panel grouped by agent domain. Clicks send an exact tool name straight to the orchestrator and skip the LLM entirely (deterministic, zero token cost).
